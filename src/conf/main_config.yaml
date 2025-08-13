@@ -1,0 +1,82 @@
+window_len: 10
+
+gait_detection:
+  net: ElderNet
+  feature_vector_size: 50
+  output_size: 2
+  head: fc
+  is_classification: True
+  pretrained: True
+  trained_model_path: weights\gait_detection_weights.pt
+  name_start_idx: 0
+  num_batches: 500
+
+step_count:
+  net: ElderNet
+  feature_vector_size: 128
+  output_size: 1
+  head: fc
+  is_regression: True
+  num_layers_regressor: 1
+  batch_norm: True
+  pretrained: True
+  trained_model_path: weights\step_count_weights.pt
+  name_start_idx: 1
+  max_mu: 25
+
+gait_speed:
+  net: ElderNet
+  feature_vector_size: 128
+  head: fc
+  is_regression: True
+  uncertainty: False
+  num_layers_regressor: 0
+  batch_norm: False
+  pretrained: True
+  trained_model_path: weights\gait_speed_weights.pt
+  name_start_idx: 1
+  max_mu: 2.0
+
+cadence:
+  net: ElderNet
+  head: fc
+  feature_vector_size: 128
+  is_regression: True
+  uncertainty: False
+  num_layers_regressor: 1
+  batch_norm: True
+  pretrained: True
+  trained_model_path: weights\cadence_weights.pt
+  name_start_idx: 1
+  max_mu: 160
+
+
+stride_length:
+  net: ElderNet
+  head: fc
+  feature_vector_size: 128
+  is_regression: True
+  uncertainty: False
+  num_layers_regressor: 1
+  batch_norm: True
+  pretrained: True
+  trained_model_path: weights\gait_length_weights.pt
+  name_start_idx: 1
+  max_mu: 2.0
+
+
+
+regularity:
+  net: ElderNet
+  head: fc
+  feature_vector_size: 128
+  is_regression: True
+  uncertainty: False
+  num_layers_regressor: 1
+  batch_norm: False
+  pretrained: True
+  trained_model_path: weights\regularity_weights.pt
+  name_start_idx: 1
+  max_mu: 1.0
+
+
