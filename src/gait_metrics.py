@@ -479,7 +479,7 @@ def main():
         [processed_acc[i:i + 300] for i in range(0, len(processed_acc) - 300 + 1, 300)]
     )
     # Process data in batches
-    batch_size = acc_win_all.shape[0] // gait_detection_model_cfg['num_bouts']
+    batch_size = acc_win_all.shape[0] // gait_detection_model_cfg['num_batches']
     pred_walk = []
     for i in range(0, len(acc_win_all), batch_size):
         batch = acc_win_all[i:i + batch_size]
@@ -487,7 +487,14 @@ def main():
         pred_walk.extend(batch_pred_walk)
 
     pred_walk = np.array(pred_walk)
-    bouts_id = detect_bouts(pred_walk)
+    # Map window predictions to seconds based on the middle-second approach
+    second_predictions = np.zeros(len(processed_acc) // fs, dtype=int)
+    second_predictions_walk = calc_second_prediction(pred_walk, window_sec, second_predictions)
+    # Merge near bouts
+    sec_per_sample = window_len / fs  # 1 for 90% overlap, 10 for no overlap
+    merged_predictions_walk = merge_gait_bouts(second_predictions_walk, sec_per_sample, 10, 3)
+    flat_predictions = np.repeat(merged_predictions_walk, fs)
+    bouts_id = detect_bouts(flat_predictions)
     bout_mask = bouts_id != 0
     unq_bouts = np.unique(bouts_id[bout_mask])
 
