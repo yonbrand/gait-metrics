@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import json
 from scipy.stats import kurtosis, skew
+import urllib.request
 
 
 # import matplotlib as mpl
@@ -189,16 +190,24 @@ def set_models_to_eval(models):
     for model in models:
         model.eval()
 
+def load_model(filename, device, verbose=True):
+    model_dir = pathlib.Path(__file__).parent / 'models'
+    model_path = model_dir / filename
+
+    if verbose:
+        print(f"Loading model {filename}...")
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model {filename} not found in {model_dir}. Please ensure it is bundled with the applet.")
+    model = joblib.load(model_path).to(device)
+    return model
+
 def main():
     parser = argparse.ArgumentParser(description='Process gait data.')
     parser.add_argument('--config', default="conf/main_config.yaml", help='Config file')
-    parser.add_argument('--filepath', default=r"N:\Gait-Neurodynamics by Names\Yonatan\gait-metrics\rush-sample.cwa.gz",
-                        help='Input file path')
+    parser.add_argument('--filepath', default=None, help='Single input file path (for backward compatibility)')
     parser.add_argument("--filepaths", nargs='+', help="List of input file paths (for batch processing)")
     parser.add_argument('--outdir', default="outputs/", help='Output directory')
-    parser.add_argument('--model_path', default=None, help='Model path')
-    parser.add_argument('--force_download', action='store_true', help='Force download')
-    parser.add_argument('--model_type', default="ssl", help='Model type')
+    parser.add_argument('--model_path', default=None, help='Custom model path (not used for multiple models)')
     parser.add_argument('--pytorch_device', default="cuda:0", help='PyTorch device')
     parser.add_argument('--sample_rate', default=None, type=int, help='Sample rate')
     parser.add_argument('--txyz', default="time,x,y,z", help='Columns')
@@ -216,48 +225,48 @@ def main():
     parser.add_argument('--quiet', action='store_true', help='Quiet mode')
     args = parser.parse_args()
 
-    # args = argparse.Namespace(
-    #     config="conf/main_config.yaml",
-    #     filepath=r"N:\Gait-Neurodynamics by Names\Yonatan\gait-metrics\P001.csv.gz",
-    #     outdir="outputs/",
-    #     model_path=None,
-    #     force_download=False,
-    #     model_type="ssl",
-    #     pytorch_device="cuda:0",
-    #     sample_rate=None,
-    #     txyz="time,x,y,z",
-    #     exclude_wear_below=None,
-    #     exclude_first_last=None, #'both',
-    #     min_wear_per_day=21 * 60,
-    #     min_wear_per_hour=50,
-    #     min_wear_per_minute=0.5,
-    #     min_walk_per_day=5,
-    #     bouts_min_walk=0.8,
-    #     bouts_max_idle=3,
-    #     start=None,
-    #     end=None,
-    #     analyze_bouts=True,
-    #     quiet=False
-    # )
-
-    # before = time.time()
-    # If single filepath is provided (backward compat), convert to list
-    if args.filepath and not args.filepaths:
-        args.filepaths = [args.filepath]
     analyze_bouts = args.analyze_bouts
     verbose = not args.quiet
+    device = args.pytorch_device
 
-    basename = utils.resolve_path(args.filepath)[1]
-    outdir = os.path.join(args.outdir, basename)
-    os.makedirs(outdir, exist_ok=True)
+    # Load models once, outside the loop (this is efficient and should not change)
+    gait_detection_model = load_model('gait_detection_model_mobD_cap24.joblib', device, verbose)
+    step_count_model = load_model('step_count_model.joblib', device, verbose)
+    gait_speed_model = load_model('gait_speed_model.joblib', device, verbose)
+    cadence_model = load_model('cadence_model.joblib', device, verbose)
+    stride_length_model = load_model('stride_length_model.joblib', device, verbose)
+    regularity_model = load_model('regularity_model.joblib', device, verbose)
 
+    set_models_to_eval([
+        gait_detection_model,
+        step_count_model,
+        gait_speed_model,
+        cadence_model,
+        stride_length_model,
+        regularity_model
+    ])
+
+    # Handle single filepath for backward compatibility
+    if args.filepath and not args.filepaths:
+        args.filepaths = [args.filepath]
+    elif not args.filepaths:
+        raise ValueError("No input files provided. Use --filepath or --filepaths.")
+
+    os.makedirs(args.outdir, exist_ok=True)
     all_stats = []
+
     for filepath in args.filepaths:
+        # Use filepath (loop var) instead of args.filepath
+        basename = utils.resolve_path(filepath)[1]
+        file_outdir = os.path.join(args.outdir, basename)
+        os.makedirs(file_outdir, exist_ok=True)
+
         info = {}
         info['GaitArgs'] = vars(args)
 
+        # Use filepath for reading
         data, info_read = utils.read(
-            args.filepath,
+            filepath,
             usecols=args.txyz,
             start_time=args.start,
             end_time=args.end,
@@ -279,25 +288,6 @@ def main():
         window_sec = 10
         window_len = int(window_sec * fs)
         window_step_len = window_len
-        device = args.pytorch_device
-
-        model_path = pathlib.Path(__file__).parent / 'models'
-
-        gait_detection_model = joblib.load(model_path.joinpath('gait_detection_model_mobD_cap24.joblib')).to(device)
-        step_count_model = joblib.load(model_path.joinpath('step_count_model.joblib')).to(device)
-        gait_speed_model = joblib.load(model_path.joinpath('gait_speed_model.joblib')).to(device)
-        cadence_model = joblib.load(model_path.joinpath('cadence_model.joblib')).to(device)
-        stride_length_model = joblib.load(model_path.joinpath('stride_length_model.joblib')).to(device)
-        regularity_model = joblib.load(model_path.joinpath('regularity_model.joblib')).to(device)
-
-        set_models_to_eval([
-            gait_detection_model,
-            step_count_model,
-            gait_speed_model,
-            cadence_model,
-            stride_length_model,
-            regularity_model
-        ])
 
         processed_acc = data[['x', 'y', 'z']].to_numpy()
         samples_per_day_resampled = int(24 * 60 * 60 * fs)
@@ -399,16 +389,19 @@ def main():
         stats = calculate_statistics(result, window_sec, window_len, analyze_bouts)
         all_stats.append(stats)
 
-    # Save combined outputs, e.g., as a single JSON or CSV for DNAnexus output
-    output_file = os.path.join(args.outdir, "all_stats.json")
-    with open(output_file, 'w') as f:
-        json.dump(all_stats, f, indent=4, cls=utils.NpEncoder)  # Assuming you have NpEncoder for numpy
-    print(f"Combined stats saved to {output_file}")
+        # Optional: Save per-file stats (useful for debugging or if DNAnexus needs separate outputs)
+        per_file_output = os.path.join(file_outdir, f"{basename}_stats.json")
+        with open(per_file_output, 'w') as f:
+            json.dump(stats, f, indent=4, cls=utils.NpEncoder)
+        if verbose:
+            print(f"Stats for {basename} saved to {per_file_output}")
 
-
-    # after = time.time()
-    # total_time = after - before
-    # print(total_time)
+    # Save combined stats (all files in one JSON)
+    combined_output_file = os.path.join(args.outdir, "all_stats.json")
+    with open(combined_output_file, 'w') as f:
+        json.dump(all_stats, f, indent=4, cls=utils.NpEncoder)
+    if verbose:
+        print(f"Combined stats for all files saved to {combined_output_file}")
 
 
 
