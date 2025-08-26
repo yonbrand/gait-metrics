@@ -248,7 +248,7 @@ def read(
         data, info = actipy.read_device(
             filepath,
             lowpass_hz=None,
-            calibrate_gravity=False,
+            calibrate_gravity=True,
             detect_nonwear=True,
             resample_hz=resample_hz,
             verbose=verbose,

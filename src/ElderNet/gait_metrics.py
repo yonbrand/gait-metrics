@@ -2,9 +2,6 @@
 
 import argparse
 import pathlib
-import pandas as pd
-import yaml
-import sys
 import time
 import os
 import joblib
@@ -12,9 +9,14 @@ import numpy as np
 import torch
 import json
 from scipy.stats import kurtosis, skew
-from models import Resnet, ElderNet
 
-import utils
+
+# import matplotlib as mpl
+# mpl.rcParams['agg.path.chunksize'] = 1000000000
+# mpl.use('TkAgg')
+# import matplotlib.pyplot as plt
+
+from . import utils
 
 N_BINS = 10
 
@@ -188,56 +190,60 @@ def set_models_to_eval(models):
         model.eval()
 
 def main():
-    # parser = argparse.ArgumentParser(description='Process gait data.')
-    # parser.add_argument('--config', default="conf/main_config.yaml", help='Config file')
-    # parser.add_argument('--filepath', default=r"N:\Gait-Neurodynamics by Names\Yonatan\gait-metrics\rush-sample.cwa.gz",
-    #                     help='Input file path')
-    # parser.add_argument('--outdir', default="outputs/", help='Output directory')
-    # parser.add_argument('--model_path', default=None, help='Model path')
-    # parser.add_argument('--force_download', action='store_true', help='Force download')
-    # parser.add_argument('--model_type', default="ssl", help='Model type')
-    # parser.add_argument('--pytorch_device', default="cuda:0", help='PyTorch device')
-    # parser.add_argument('--sample_rate', default=None, type=int, help='Sample rate')
-    # parser.add_argument('--txyz', default="time,x,y,z", help='Columns')
-    # parser.add_argument('--exclude_wear_below', default=None, type=float, help='Exclude wear below')
-    # parser.add_argument('--exclude_first_last', default='both', help='Exclude first last')
-    # parser.add_argument('--min_wear_per_day', default=21 * 60, type=int, help='Min wear per day')
-    # parser.add_argument('--min_wear_per_hour', default=50, type=int, help='Min wear per hour')
-    # parser.add_argument('--min_wear_per_minute', default=0.5, type=float, help='Min wear per minute')
-    # parser.add_argument('--min_walk_per_day', default=5, type=int, help='Min walk per day')
-    # parser.add_argument('--bouts_min_walk', default=0.8, type=float, help='Bouts min walk')
-    # parser.add_argument('--bouts_max_idle', default=3, type=int, help='Bouts max idle')
-    # parser.add_argument('--start', default=None, help='Start time')
-    # parser.add_argument('--end', default=None, help='End time')
-    # parser.add_argument('--analyze_bouts', default=False, help='Skip bout-level analyses')
-    # parser.add_argument('--quiet', action='store_true', help='Quiet mode')
-    # args = parser.parse_args()
+    parser = argparse.ArgumentParser(description='Process gait data.')
+    parser.add_argument('--config', default="conf/main_config.yaml", help='Config file')
+    parser.add_argument('--filepath', default=r"N:\Gait-Neurodynamics by Names\Yonatan\gait-metrics\rush-sample.cwa.gz",
+                        help='Input file path')
+    parser.add_argument("--filepaths", nargs='+', help="List of input file paths (for batch processing)")
+    parser.add_argument('--outdir', default="outputs/", help='Output directory')
+    parser.add_argument('--model_path', default=None, help='Model path')
+    parser.add_argument('--force_download', action='store_true', help='Force download')
+    parser.add_argument('--model_type', default="ssl", help='Model type')
+    parser.add_argument('--pytorch_device', default="cuda:0", help='PyTorch device')
+    parser.add_argument('--sample_rate', default=None, type=int, help='Sample rate')
+    parser.add_argument('--txyz', default="time,x,y,z", help='Columns')
+    parser.add_argument('--exclude_wear_below', default=None, type=float, help='Exclude wear below')
+    parser.add_argument('--exclude_first_last', default='both', help='Exclude first last')
+    parser.add_argument('--min_wear_per_day', default=21 * 60, type=int, help='Min wear per day')
+    parser.add_argument('--min_wear_per_hour', default=50, type=int, help='Min wear per hour')
+    parser.add_argument('--min_wear_per_minute', default=0.5, type=float, help='Min wear per minute')
+    parser.add_argument('--min_walk_per_day', default=5, type=int, help='Min walk per day')
+    parser.add_argument('--bouts_min_walk', default=0.8, type=float, help='Bouts min walk')
+    parser.add_argument('--bouts_max_idle', default=3, type=int, help='Bouts max idle')
+    parser.add_argument('--start', default=None, help='Start time')
+    parser.add_argument('--end', default=None, help='End time')
+    parser.add_argument('--analyze_bouts', default=False, help='Skip bout-level analyses')
+    parser.add_argument('--quiet', action='store_true', help='Quiet mode')
+    args = parser.parse_args()
 
-    args = argparse.Namespace(
-        config="conf/main_config.yaml",
-        filepath=r"N:\Gait-Neurodynamics by Names\Yonatan\gait-metrics\tiny-sample.cwa.gz",
-        outdir="outputs/",
-        model_path=None,
-        force_download=False,
-        model_type="ssl",
-        pytorch_device="cuda:0",
-        sample_rate=None,
-        txyz="time,x,y,z",
-        exclude_wear_below=None,
-        exclude_first_last='both',
-        min_wear_per_day=21 * 60,
-        min_wear_per_hour=50,
-        min_wear_per_minute=0.5,
-        min_walk_per_day=5,
-        bouts_min_walk=0.8,
-        bouts_max_idle=3,
-        start=None,
-        end=None,
-        analyze_bouts=True,
-        quiet=False
-    )
+    # args = argparse.Namespace(
+    #     config="conf/main_config.yaml",
+    #     filepath=r"N:\Gait-Neurodynamics by Names\Yonatan\gait-metrics\P001.csv.gz",
+    #     outdir="outputs/",
+    #     model_path=None,
+    #     force_download=False,
+    #     model_type="ssl",
+    #     pytorch_device="cuda:0",
+    #     sample_rate=None,
+    #     txyz="time,x,y,z",
+    #     exclude_wear_below=None,
+    #     exclude_first_last=None, #'both',
+    #     min_wear_per_day=21 * 60,
+    #     min_wear_per_hour=50,
+    #     min_wear_per_minute=0.5,
+    #     min_walk_per_day=5,
+    #     bouts_min_walk=0.8,
+    #     bouts_max_idle=3,
+    #     start=None,
+    #     end=None,
+    #     analyze_bouts=True,
+    #     quiet=False
+    # )
 
-    before = time.time()
+    # before = time.time()
+    # If single filepath is provided (backward compat), convert to list
+    if args.filepath and not args.filepaths:
+        args.filepaths = [args.filepath]
     analyze_bouts = args.analyze_bouts
     verbose = not args.quiet
 
@@ -245,181 +251,166 @@ def main():
     outdir = os.path.join(args.outdir, basename)
     os.makedirs(outdir, exist_ok=True)
 
-    info = {}
-    info['GaitArgs'] = vars(args)
+    all_stats = []
+    for filepath in args.filepaths:
+        info = {}
+        info['GaitArgs'] = vars(args)
 
-    data, info_read = utils.read(
-        args.filepath,
-        usecols=args.txyz,
-        start_time=args.start,
-        end_time=args.end,
-        sample_rate=args.sample_rate,
-        resample_hz=30,
-        verbose=verbose
-    )
-    info.update(info_read)
+        data, info_read = utils.read(
+            args.filepath,
+            usecols=args.txyz,
+            start_time=args.start,
+            end_time=args.end,
+            sample_rate=args.sample_rate,
+            resample_hz=30,
+            verbose=verbose
+        )
+        info.update(info_read)
 
-    if args.exclude_first_last is not None:
-        data = utils.drop_first_last_days(data, args.exclude_first_last)
+        if args.exclude_first_last is not None:
+            data = utils.drop_first_last_days(data, args.exclude_first_last)
 
-    if args.exclude_wear_below is not None:
-        data = utils.flag_wear_below_days(data, args.exclude_wear_below)
+        if args.exclude_wear_below is not None:
+            data = utils.flag_wear_below_days(data, args.exclude_wear_below)
 
-    info.update(utils.calculate_wear_stats(data))
+        info.update(utils.calculate_wear_stats(data))
 
-    fs = info['ResampleRate']
-    window_sec = 10
-    window_len = int(window_sec * fs)
-    window_step_len = window_len
-    device = args.pytorch_device
+        fs = info['ResampleRate']
+        window_sec = 10
+        window_len = int(window_sec * fs)
+        window_step_len = window_len
+        device = args.pytorch_device
 
-    model_path = pathlib.Path(__file__).parent / 'models'
+        model_path = pathlib.Path(__file__).parent / 'models'
 
+        gait_detection_model = joblib.load(model_path.joinpath('gait_detection_model_mobD_cap24.joblib')).to(device)
+        step_count_model = joblib.load(model_path.joinpath('step_count_model.joblib')).to(device)
+        gait_speed_model = joblib.load(model_path.joinpath('gait_speed_model.joblib')).to(device)
+        cadence_model = joblib.load(model_path.joinpath('cadence_model.joblib')).to(device)
+        stride_length_model = joblib.load(model_path.joinpath('stride_length_model.joblib')).to(device)
+        regularity_model = joblib.load(model_path.joinpath('regularity_model.joblib')).to(device)
 
+        set_models_to_eval([
+            gait_detection_model,
+            step_count_model,
+            gait_speed_model,
+            cadence_model,
+            stride_length_model,
+            regularity_model
+        ])
 
-    gait_detection_model = joblib.load(model_path.joinpath('gait_detection_model_mobD_cap24.joblib')).to(device)
-    step_count_model = joblib.load(model_path.joinpath('step_count_model.joblib')).to(device)
-    gait_speed_model = joblib.load(model_path.joinpath('gait_speed_model.joblib')).to(device)
-    cadence_model = joblib.load(model_path.joinpath('cadence_model.joblib')).to(device)
-    stride_length_model = joblib.load(model_path.joinpath('stride_length_model.joblib')).to(device)
-    regularity_model = joblib.load(model_path.joinpath('regularity_model.joblib')).to(device)
+        processed_acc = data[['x', 'y', 'z']].to_numpy()
+        samples_per_day_resampled = int(24 * 60 * 60 * fs)
+        num_days = processed_acc.shape[0] // samples_per_day_resampled
+        acc_win_all = np.array(
+            [processed_acc[i:i + window_len] for i in range(0, len(processed_acc) - window_len + 1, window_step_len)]
+        )
 
-    set_models_to_eval([
-        gait_detection_model,
-        step_count_model,
-        gait_speed_model,
-        cadence_model,
-        stride_length_model,
-        regularity_model
-    ])
-
-    processed_acc = data[['x', 'y', 'z']].to_numpy()
-    samples_per_day_resampled = int(24 * 60 * 60 * fs)
-    num_days = processed_acc.shape[0] // samples_per_day_resampled
-    acc_win_all = np.array(
-        [processed_acc[i:i + window_len] for i in range(0, len(processed_acc) - window_len + 1, window_step_len)]
-    )
-
-    batch_size = 512
-    pred_walk = []
-    for i in range(0, len(acc_win_all), batch_size):
-        batch = acc_win_all[i:i + batch_size]
-        with torch.inference_mode():
-            batch_pred_walk = process_batch(batch, gait_detection_model, device)
-        pred_walk.extend(batch_pred_walk)
-    pred_walk = np.array(pred_walk)
-    flat_predictions = np.repeat(pred_walk, window_step_len)
-    days_array = np.array(np.arange(len(flat_predictions)) // samples_per_day_resampled, dtype=np.int64)
-
-    diff_preds = np.diff(pred_walk, prepend=0, append=0)
-    where_bouts_start = np.where(diff_preds == 1)[0]
-    where_bouts_end = np.where(diff_preds == -1)[0]
-    bouts_durations = (where_bouts_end - where_bouts_start) * window_sec
-    if analyze_bouts:
-        bouts_id_windows = np.zeros_like(pred_walk)
-        for bout_idx, (start, end) in enumerate(zip(where_bouts_start, where_bouts_end), 1):
-            bouts_id_windows[start:end] = bout_idx
-        bout_starts = where_bouts_start * window_len
-        bout_starts = np.minimum(bout_starts, len(days_array) - 1)
-        bout_days = days_array[bout_starts]
-    else:
-        bouts_id_windows = np.array([])
-        bout_days = np.array([])
-
-    walk_mask = pred_walk == 1
-    walking_window_indices = np.where(walk_mask)[0]
-    walking_bouts_id = bouts_id_windows[walk_mask] if analyze_bouts else np.array([])
-    walking_batch = acc_win_all[walk_mask]
-    del acc_win_all
-    window_starts = walking_window_indices * window_len
-    window_starts = np.minimum(window_starts, len(days_array) - 1)
-    window_days = days_array[window_starts]
-
-    if walking_batch.size > 0:
-        pred_steps = []
-        pred_speed = []
-        pred_cadence = []
-        pred_gait_length = []
-        pred_regularity_eldernet = []
-        for i in range(0, len(walking_batch), batch_size):
-            batch = walking_batch[i:i + batch_size]
+        batch_size = 512
+        pred_walk = []
+        for i in range(0, len(acc_win_all), batch_size):
+            batch = acc_win_all[i:i + batch_size]
             with torch.inference_mode():
-                batch_pred_steps = process_batch(batch, step_count_model, device)
-                batch_pred_speed = process_batch(batch, gait_speed_model, device)
-                batch_pred_cadence = process_batch(batch, cadence_model, device)
-                batch_pred_gait_length = process_batch(batch, stride_length_model, device)
-                batch_pred_regularity_eldernet = process_batch(batch, regularity_model, device)
-            pred_steps.extend(batch_pred_steps)
-            pred_speed.extend(batch_pred_speed)
-            pred_cadence.extend(batch_pred_cadence)
-            pred_gait_length.extend(batch_pred_gait_length)
-            pred_regularity_eldernet.extend(batch_pred_regularity_eldernet)
+                batch_pred_walk = process_batch(batch, gait_detection_model, device)
+            pred_walk.extend(batch_pred_walk)
+        pred_walk = np.array(pred_walk)
+        flat_predictions = np.repeat(pred_walk, window_step_len)
+        days_array = np.array(np.arange(len(flat_predictions)) // samples_per_day_resampled, dtype=np.int64)
 
-        pred_steps = np.array(np.round(pred_steps))
-        pred_speed = np.array(pred_speed)
-        pred_cadence = np.array(pred_cadence)
-        pred_gait_length = np.array(pred_gait_length)
-        pred_gait_length_indirect = np.array(120 * pred_speed / pred_cadence)
-        pred_regularity_eldernet = np.array(pred_regularity_eldernet)
-        pred_regularity_sp = process_signal_regularity(walking_batch, fs)
-        del walking_batch, batch
-    else:
-        pred_steps = np.array([])
-        pred_speed = np.array([])
-        pred_cadence = np.array([])
-        pred_gait_length = np.array([])
-        pred_gait_length_indirect = np.array([])
-        pred_regularity_eldernet = np.array([])
-        pred_regularity_sp = np.array([])
-        window_days = np.array([])
+        diff_preds = np.diff(pred_walk, prepend=0, append=0)
+        where_bouts_start = np.where(diff_preds == 1)[0]
+        where_bouts_end = np.where(diff_preds == -1)[0]
+        bouts_durations = (where_bouts_end - where_bouts_start) * window_sec
+        if analyze_bouts:
+            bouts_id_windows = np.zeros_like(pred_walk)
+            for bout_idx, (start, end) in enumerate(zip(where_bouts_start, where_bouts_end), 1):
+                bouts_id_windows[start:end] = bout_idx
+            bout_starts = where_bouts_start * window_len
+            bout_starts = np.minimum(bout_starts, len(days_array) - 1)
+            bout_days = days_array[bout_starts]
+        else:
+            bouts_id_windows = np.array([])
+            bout_days = np.array([])
 
-    result = {
-        'subject_id': basename,
-        'wear_days': num_days,
-        'pred_walk': flat_predictions,
-        'pred_window_steps': pred_steps,
-        'window_days': np.array(window_days),
-        'pred_speed': pred_speed,
-        'pred_cadence': pred_cadence,
-        'pred_gait_length': pred_gait_length,
-        'pred_gait_length_indirect': pred_gait_length_indirect,
-        'pred_regularity_eldernet': pred_regularity_eldernet,
-        'pred_regularity_sp': pred_regularity_sp,
-        'bouts_id': walking_bouts_id,
-        'bouts_durations': bouts_durations,
-        'bout_days': bout_days
-    }
+        walk_mask = pred_walk == 1
+        walking_window_indices = np.where(walk_mask)[0]
+        walking_bouts_id = bouts_id_windows[walk_mask] if analyze_bouts else np.array([])
+        walking_batch = acc_win_all[walk_mask]
+        del acc_win_all
+        window_starts = walking_window_indices * window_len
+        window_starts = np.minimum(window_starts, len(days_array) - 1)
+        window_days = days_array[window_starts]
 
-    stats = calculate_statistics(result, window_sec, window_len, analyze_bouts)
+        if walking_batch.size > 0:
+            pred_steps = []
+            pred_speed = []
+            pred_cadence = []
+            pred_gait_length = []
+            pred_regularity_eldernet = []
+            for i in range(0, len(walking_batch), batch_size):
+                batch = walking_batch[i:i + batch_size]
+                with torch.inference_mode():
+                    batch_pred_steps = process_batch(batch, step_count_model, device)
+                    batch_pred_speed = process_batch(batch, gait_speed_model, device)
+                    batch_pred_cadence = process_batch(batch, cadence_model, device)
+                    batch_pred_gait_length = process_batch(batch, stride_length_model, device)
+                    batch_pred_regularity_eldernet = process_batch(batch, regularity_model, device)
+                pred_steps.extend(batch_pred_steps)
+                pred_speed.extend(batch_pred_speed)
+                pred_cadence.extend(batch_pred_cadence)
+                pred_gait_length.extend(batch_pred_gait_length)
+                pred_regularity_eldernet.extend(batch_pred_regularity_eldernet)
 
-    # Save stats to JSON
-    def convert_numpy(obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, np.integer):
-            return int(obj)
-        elif isinstance(obj, np.floating):
-            return float(obj)
-        elif isinstance(obj, dict):
-            return {key: convert_numpy(value) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [convert_numpy(item) for item in obj]
-        return obj
+            pred_steps = np.array(np.round(pred_steps))
+            pred_speed = np.array(pred_speed)
+            pred_cadence = np.array(pred_cadence)
+            pred_gait_length = np.array(pred_gait_length)
+            pred_gait_length_indirect = np.array(120 * pred_speed / pred_cadence)
+            pred_regularity_eldernet = np.array(pred_regularity_eldernet)
+            pred_regularity_sp = process_signal_regularity(walking_batch, fs)
+            del walking_batch, batch
+        else:
+            pred_steps = np.array([])
+            pred_speed = np.array([])
+            pred_cadence = np.array([])
+            pred_gait_length = np.array([])
+            pred_gait_length_indirect = np.array([])
+            pred_regularity_eldernet = np.array([])
+            pred_regularity_sp = np.array([])
+            window_days = np.array([])
 
-    output_file = os.path.join(outdir, f"{basename}_stats.json")
-    try:
-        with open(output_file, 'w') as f:
-            json.dump(convert_numpy(stats), f, indent=4)
-        if verbose:
-            print(f"Stats saved to {output_file}")
-    except Exception as e:
-        print(f"Error saving stats to {output_file}: {e}")
+        result = {
+            'subject_id': basename,
+            'wear_days': num_days,
+            'pred_walk': flat_predictions,
+            'pred_window_steps': pred_steps,
+            'window_days': np.array(window_days),
+            'pred_speed': pred_speed,
+            'pred_cadence': pred_cadence,
+            'pred_gait_length': pred_gait_length,
+            'pred_gait_length_indirect': pred_gait_length_indirect,
+            'pred_regularity_eldernet': pred_regularity_eldernet,
+            'pred_regularity_sp': pred_regularity_sp,
+            'bouts_id': walking_bouts_id,
+            'bouts_durations': bouts_durations,
+            'bout_days': bout_days
+        }
 
-    after = time.time()
-    total_time = after - before
-    print(total_time)
+        stats = calculate_statistics(result, window_sec, window_len, analyze_bouts)
+        all_stats.append(stats)
 
-    return stats
+    # Save combined outputs, e.g., as a single JSON or CSV for DNAnexus output
+    output_file = os.path.join(args.outdir, "all_stats.json")
+    with open(output_file, 'w') as f:
+        json.dump(all_stats, f, indent=4, cls=utils.NpEncoder)  # Assuming you have NpEncoder for numpy
+    print(f"Combined stats saved to {output_file}")
+
+
+    # after = time.time()
+    # total_time = after - before
+    # print(total_time)
+
+
 
 if __name__ == '__main__':
     main()
