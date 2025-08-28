@@ -1,0 +1,576 @@
+#######################################################################################################################
+# Regularity calculation utilities
+#######################################################################################################################
+import pandas as pd
+from scipy.signal import find_peaks
+
+def xcov(x, biased=False):
+    """
+    Computes the auto-covariance of an array (similar to MATLAB's xcov).
+    Parameters:
+        x (array-like): Input array.
+        biased (bool): Whether to compute the biased estimate (default is unbiased).
+    Returns:
+        c (numpy.ndarray): Auto-covariance values.
+        lags (numpy.ndarray): Lags corresponding to the auto-covariance values.
+    """
+    n = len(x)
+    mean_x = np.mean(x)
+    x_centered = x - mean_x
+    # Full cross-correlation
+    c_full = np.correlate(x_centered, x_centered, mode='full')
+    # Normalize
+    if biased:
+        c = c_full / n
+    else:
+        lags = np.arange(-n + 1, n)
+        normalization_factors = n - np.abs(lags)
+        c = c_full / normalization_factors
+    # Lags
+    lags = np.arange(-n + 1, n)
+    return c, lags
+
+def smooth(x, fs):
+    # Window size
+    window_size = int(0.2 * fs)
+
+    # Ensure the window size is odd (for symmetry)
+    if window_size % 2 == 0:
+        window_size += 1
+
+    # Smooth using pandas (moving average)
+    smoothed_x = pd.Series(x).rolling(window=window_size, center=True).mean().to_numpy()
+
+    # Handle NaN values at the edges (if needed)
+    # Example: fill with original values
+    smoothed_x[np.isnan(smoothed_x)] = x[np.isnan(smoothed_x)]
+
+    return smoothed_x
+
+
+def correct_peaks(data, pks, locs):
+    """
+    Correct peaks found in a filtered signal to match the peaks in the raw signal.
+
+    Parameters:
+    data (array-like): Original data (raw data).
+    pks (array-like): Values of the peaks in the filtered signal.
+    locs (array-like): Indices of the peaks in the filtered signal.
+
+    Returns:
+    tuple: Corrected peak values and indices in the raw signal.
+    """
+
+    # If there are fewer than two peaks, skip correction.
+    if len(locs) < 2:
+        return pks, locs
+
+    # Define search window size
+    locale_win = int(np.ceil(0.2 * np.median(np.diff(locs))))
+
+    # Remove peaks too close to the start/end of the recording
+    valid_mask = (locs > locale_win) & (locs < (len(data) - locale_win))
+    pks = pks[valid_mask]
+    locs = locs[valid_mask]
+
+    # Adjust peaks to align with the raw data
+    for peak_ind in range(len(locs)):
+        search_start = locs[peak_ind] - locale_win
+        search_end = locs[peak_ind] + (locale_win // 2) + 1
+        search_window = data[search_start:search_end]
+
+        max_val = np.max(search_window)
+        max_idx = np.argmax(search_window)
+
+        pks[peak_ind] = max_val
+        locs[peak_ind] = search_start + max_idx
+
+    # Remove peaks that are too close due to the correction
+    close_peaks = np.where(np.diff(locs) < locale_win)[0]
+    for index in close_peaks[::-1]:
+        if pks[index] > pks[index + 1]:
+            pks = np.delete(pks, index + 1)
+            locs = np.delete(locs, index + 1)
+        else:
+            pks = np.delete(pks, index)
+            locs = np.delete(locs, index)
+
+    return pks, locs
+
+def calc_regularity(acc, sample_rate):
+    """
+    Calculate gait regularity from lower-back acceleration data.
+    This is a python version of the MATLAB code, found here:
+    "N:\Projects\Mobilise-D\WP2\Secondary Gait Metrics Codes\SO environment\SO_driver\Library\SO_functions\RegularitySymmetry.m"
+    :param acc: array-like in the shape of (n,). Representing the acceleration magnitude.
+    :param sample_rate:
+    :return: Stride regularity, measure of the gait consistency
+    """
+    c, lags = xcov(acc, biased=True)
+    normalized_c = c / c.max()
+    normalized_c = normalized_c[lags >= 0]
+    lags = lags[lags >= 0 ]
+    Smoothed_normalized_c = smooth(normalized_c, sample_rate)
+    # Assume Smoothed_normalized_c is a 1D numpy array, and Sample_rate is defined
+    min_peak_distance = sample_rate / 4
+    # Use find_peaks with the distance parameter
+    locs, properties = find_peaks(Smoothed_normalized_c, distance=min_peak_distance)
+    # Extract peak values using the indices (locs)
+    pks = Smoothed_normalized_c[locs]
+    mask = pks > 0
+    pks = pks[mask]
+    locs = locs[mask]
+    pks, locs = correct_peaks(normalized_c, pks, locs)
+    if pks.size > 1:
+        #Autocorrelation coefficient for neighboring steps
+        step_regularity = pks[0]
+        # Autocorrelation coefficient for neighboring strides
+        stride_regularity = pks[1]
+    else:
+        stride_regularity = 0
+
+    return stride_regularity
+
+
+###################################################################################################################################
+# Utils that taken from https://github.com/OxWearables/stepcount/blob/main/src/stepcount/utils.py
+########################################################################################################################
+import pathlib
+import json
+import hashlib
+import warnings
+from typing import Union
+import numpy as np
+import pandas as pd
+from pandas.tseries.frequencies import to_offset
+import actipy
+
+def resolve_path(path):
+    """ Return parent folder, file name and file extension """
+    p = pathlib.Path(path)
+    extension = p.suffixes[0]
+    filename = p.name.rsplit(extension)[0]
+    dirname = p.parent
+    return dirname, filename, extension
+
+
+
+def read(
+    filepath: str,
+    usecols: str = 'time,x,y,z',
+    start_time: str = None,
+    end_time: str = None,
+    sample_rate: float = None,
+    resample_hz: str = 'uniform',
+    verbose: bool = True
+):
+    """
+    Read and preprocess activity data from a file.
+
+    This function reads activity data from various file formats, processes it using the `actipy` library,
+    and returns the processed data along with metadata information.
+
+    Parameters:
+    - filepath (str): The path to the file containing activity data.
+    - usecols (str, optional): A comma-separated string of column names to use when reading CSV files.
+      Default is 'time,x,y,z'.
+    - resample_hz (str, optional): The resampling frequency for the data. If 'uniform', it will use `sample_rate`
+      and resample to ensure it is evenly spaced. Default is 'uniform'.
+    - sample_rate (float, optional): The sample rate of the data. If None, it will be inferred. Default is None.
+    - verbose (bool, optional): If True, enables verbose output during processing. Default is True.
+
+    Returns:
+    - tuple: A tuple containing:
+        - data (pd.DataFrame): The processed activity data.
+        - info (dict): A dictionary containing metadata information about the data.
+
+    Raises:
+    - ValueError: If the file format is unknown or unsupported.
+
+    Example:
+        data, info = read('activity_data.csv')
+    """
+
+    p = pathlib.Path(filepath)
+    fsize = round(p.stat().st_size / (1024 * 1024), 1)
+    ftype = p.suffix.lower()
+    if ftype in (".gz", ".xz", ".lzma", ".bz2", ".zip"):  # if file is compressed, check the next extension
+        ftype = pathlib.Path(p.stem).suffix.lower()
+
+    if ftype in (".csv", ".pkl"):
+
+        if ftype == ".csv":
+            tcol, xcol, ycol, zcol = usecols.split(',')
+            data = pd.read_csv(
+                filepath,
+                usecols=[tcol, xcol, ycol, zcol],
+                parse_dates=[tcol],
+                index_col=tcol,
+                dtype={xcol: 'f4', ycol: 'f4', zcol: 'f4'},
+            )
+            # rename to standard names
+            data = data.rename(columns={xcol: 'x', ycol: 'y', zcol: 'z'})
+            data.index.name = 'time'
+
+        elif ftype == ".pkl":
+            data = pd.read_pickle(filepath)
+
+        else:
+            raise ValueError(f"Unknown file format: {ftype}")
+
+        if sample_rate in (None, False):
+            freq = infer_freq(data.index)
+            sample_rate = int(np.round(pd.Timedelta('1s') / freq))
+
+        # Quick fix: Drop duplicate indices. TODO: Maybe should be handled by actipy.
+        data = data[~data.index.duplicated(keep='first')]
+
+        data, info = actipy.process(
+            data, sample_rate,
+            lowpass_hz=None,
+            calibrate_gravity=True,
+            detect_nonwear=True,
+            resample_hz=resample_hz,
+            verbose=verbose,
+        )
+
+        info.update({
+            "Filename": filepath,
+            "Device": ftype,
+            "Filesize(MB)": fsize,
+            "SampleRate": sample_rate,
+        })
+
+    elif ftype in (".cwa", ".gt3x", ".bin"):
+
+        data, info = actipy.read_device(
+            filepath,
+            lowpass_hz=None,
+            calibrate_gravity=True,
+            detect_nonwear=True,
+            resample_hz=resample_hz,
+            verbose=verbose,
+        )
+
+    else:
+        raise ValueError(f"Unknown file format: {ftype}")
+
+    if 'ResampleRate' not in info:
+        info['ResampleRate'] = info['SampleRate']
+
+    # Trim the data if start/end times are specified
+    if start_time is not None:
+        data = data.loc[start_time:]
+    if end_time is not None:
+        data = data.loc[:end_time]
+
+    # Update wear stats
+    info.update(calculate_wear_stats(data))
+
+    return data, info
+
+def calculate_wear_stats(data: pd.DataFrame):
+    """
+    Calculate wear time and related information from raw accelerometer data.
+
+    Parameters:
+    - data (pd.DataFrame): A pandas DataFrame of raw accelerometer data with columns 'x', 'y', 'z' and a DatetimeIndex.
+
+    Returns:
+    - dict: A dictionary containing various wear time stats.
+
+    Example:
+        info = calculate_wear_stats(data)
+    """
+
+    TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+    n_data = len(data)
+
+    if n_data == 0:
+        start_time = None
+        end_time = None
+        wear_start_time = None
+        wear_end_time = None
+        nonwear_duration = 0.0
+        wear_duration = 0.0
+        covers24hok = 0
+
+    else:
+        na = data.isna().any(axis=1)  # TODO: check na only on x,y,z cols?
+        dt = infer_freq(data.index).total_seconds()
+        start_time = data.index[0].strftime(TIME_FORMAT)
+        end_time = data.index[-1].strftime(TIME_FORMAT)
+        wear_start_time = data.first_valid_index()
+        if wear_start_time is not None:
+            wear_start_time = wear_start_time.strftime(TIME_FORMAT)
+        wear_end_time = data.last_valid_index()
+        if wear_end_time is not None:
+            wear_end_time = wear_end_time.strftime(TIME_FORMAT)
+        nonwear_duration = na.sum() * dt / (60 * 60 * 24)
+        wear_duration = n_data * dt / (60 * 60 * 24) - nonwear_duration
+        coverage = (~na).groupby(na.index.hour).mean()
+        covers24hok = int(len(coverage) == 24 and coverage.min() >= 0.01)
+
+    return {
+        'StartTime': start_time,
+        'EndTime': end_time,
+        'WearStartTime': wear_start_time,
+        'WearEndTime': wear_end_time,
+        'WearTime(days)': wear_duration,
+        'NonwearTime(days)': nonwear_duration,
+        'Covers24hOK': covers24hok
+    }
+
+
+def flag_wear_below_days(
+    x: Union[pd.Series, pd.DataFrame],
+    min_wear: str = '12H'
+):
+    """
+    Set days containing less than the specified minimum wear time (`min_wear`) to NaN.
+
+    Parameters:
+    - x (pd.Series or pd.DataFrame): A pandas Series or DataFrame with a DatetimeIndex representing time series data.
+    - min_wear (str): A string representing the minimum wear time required per day (e.g., '8H' for 8 hours).
+
+    Returns:
+    - pd.Series or pd.DataFrame: A pandas Series or DataFrame with days having less than `min_wear` of valid data set to NaN.
+
+    Example:
+        # Exclude days with less than 12 hours of valid data
+        series = exclude_wear_below_days(series, min_wear='12H')
+    """
+    if len(x) == 0:
+        print("No data to exclude")
+        return x
+
+    min_wear = pd.Timedelta(min_wear)
+    dt = infer_freq(x.index)
+    ok = x.notna()
+    if isinstance(ok, pd.DataFrame):
+        ok = ok.all(axis=1)
+    ok = (
+        ok
+        .groupby(x.index.date)
+        .sum() * dt
+        >= min_wear
+    )
+    # keep ok days, rest is set to NaN
+    x = x.copy()  # make a copy to avoid modifying the original data
+    x[np.isin(x.index.date, ok[~ok].index)] = np.nan
+    return x
+
+
+def drop_first_last_days(
+    x: Union[pd.Series, pd.DataFrame],
+    first_or_last='both'
+):
+    """
+    Drop the first day, last day, or both from a time series.
+
+    Parameters:
+    - x (pd.Series or pd.DataFrame): A pandas Series or DataFrame with a DatetimeIndex representing time series data.
+    - first_or_last (str, optional): A string indicating which days to drop. Options are 'first', 'last', or 'both'. Default is 'both'.
+
+    Returns:
+    - pd.Series or pd.DataFrame: A pandas Series or DataFrame with the values of the specified days dropped.
+
+    Example:
+        # Drop the first day from the series
+        series = drop_first_last_days(series, first_or_last='first')
+    """
+    if len(x) == 0:
+        print("No data to drop")
+        return x
+
+    if first_or_last == 'first':
+        x = x[x.index.date != x.index.date[0]]
+    elif first_or_last == 'last':
+        x = x[x.index.date != x.index.date[-1]]
+    elif first_or_last == 'both':
+        x = x[(x.index.date != x.index.date[0]) & (x.index.date != x.index.date[-1])]
+    return x
+
+
+def impute_missing(
+    data: pd.DataFrame,
+    extrapolate=True,
+    skip_full_missing_days=True
+):
+    """
+    Impute missing values in the given DataFrame using a multi-step approach.
+
+    This function fills in missing values in a time series DataFrame by applying a series of
+    imputation strategies. It can also extrapolate data to ensure full 24-hour coverage and
+    optionally skip days that are entirely missing.
+
+    Parameters:
+    - data (pd.DataFrame): The DataFrame containing the time series data to be imputed.
+      The index should be a datetime index.
+    - extrapolate (bool, optional): Whether to extrapolate data beyond the start and end times
+      to ensure full 24-hour coverage. Defaults to True.
+    - skip_full_missing_days (bool, optional): Whether to skip days that have all missing values.
+      Defaults to True.
+
+    Returns:
+    - pd.DataFrame: The DataFrame with missing values imputed.
+
+    Notes:
+    - The imputation process involves three steps in the following order:
+        1. Imputation using the same day of the week.
+        2. Imputation within weekdays or weekends.
+        3. Imputation using all other days.
+    - The granularity of the imputation is 5 minutes.
+    - If `extrapolate` is True, the function will attempt to fill in data beyond the start and end times, so that
+      the first and last day have full 24-hour coverage.
+    - If `skip_full_missing_days` is True, days with all missing values will be excluded from the imputation process.
+    """
+    def fillna(subframe):
+        if isinstance(subframe, pd.Series):
+            x = subframe.to_numpy()
+            nan = np.isnan(x)
+            nanlen = len(x[nan])
+            if 0 < nanlen < len(x):  # check x contains a NaN and is not all NaN
+                x[nan] = np.nanmean(x)
+                return x  # will be cast back to a Series automatically
+            else:
+                return subframe
+
+    def impute(data):
+        return (
+            data
+            # first attempt imputation using same day of week
+            .groupby([data.index.weekday, data.index.hour, data.index.minute // 5])
+            .transform(fillna)
+            # then try within weekday/weekend
+            .groupby([data.index.weekday >= 5, data.index.hour, data.index.minute // 5])
+            .transform(fillna)
+            # finally, use all other days
+            .groupby([data.index.hour, data.index.minute // 5])
+            .transform(fillna)
+        )
+
+    if skip_full_missing_days:
+        na_dates = data.isna().groupby(data.index.date).all()
+
+    if extrapolate:  # extrapolate beyond start/end times to have full 24h
+        freq = infer_freq(data.index)
+        if pd.isna(freq):
+            warnings.warn("Cannot infer frequency, using 1s")
+            freq = pd.Timedelta('1s')
+        freq = to_offset(freq)
+        data = data.reindex(
+            pd.date_range(
+                # Note that at exactly 00:00:00, the floor('D') and ceil('D') will be the same
+                data.index[0].floor('D'),
+                data.index[-1].ceil('D'),
+                freq=freq,
+                inclusive='left',
+                name='time',
+            ),
+            method='nearest',
+            tolerance=pd.Timedelta('1m'),
+            limit=1)
+
+    data = impute(data)
+
+    if skip_full_missing_days:
+        data.mask(np.isin(data.index.date, na_dates[na_dates].index), inplace=True)
+
+    return data
+
+
+def impute_days(
+    x: pd.Series,
+    method='mean'
+):
+    """
+    Impute missing values for data with a daily resolution.
+
+    The imputation is performed in three steps: first by the same day of the
+    week, then by weekdays or weekends, and finally by the entire series.
+
+    Parameters:
+    - x (pd.Series): A pandas Series at a daily resolution level.
+    - method (str, optional): The imputation method to use. Options are 'mean' or 'median'.
+      Defaults to 'mean'.
+
+    Returns:
+    - pd.Series: A pandas Series with missing days imputed.
+
+    Raises:
+    - ValueError: If an unknown imputation method is specified.
+
+    Notes:
+    - The imputation process involves three steps in the following order:
+        1. Imputation using the same day of the week.
+        2. Imputation within weekdays or weekends.
+        3. Imputation using the entire series.
+    - If the entire Series is missing, it will be returned as is.
+    """
+    if x.isna().all():
+        return x
+
+    def fillna(x):
+        if method == 'mean':
+            return x.fillna(x.mean())
+        elif method == 'median':
+            return x.fillna(x.median())
+        else:
+            raise ValueError(f"Unknown method: {method}")
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='Mean of empty slice')
+        return (
+            x
+            .groupby(x.index.weekday).transform(fillna)
+            .groupby(x.index.weekday >= 5).transform(fillna)
+            .transform(fillna)
+        )
+
+
+def infer_freq(t):
+    """ Like pd.infer_freq but more forgiving """
+    tdiff = t.to_series().diff()
+    q1, q3 = tdiff.quantile([0.25, 0.75])
+    tdiff = tdiff[(q1 <= tdiff) & (tdiff <= q3)]
+    freq = tdiff.mean()
+    freq = pd.Timedelta(freq)
+    return freq
+
+
+def resolve_path(path):
+    """ Return parent folder, file name and file extension """
+    p = pathlib.Path(path)
+    extension = p.suffixes[0]
+    filename = p.name.rsplit(extension)[0]
+    dirname = p.parent
+    return dirname, filename, extension
+
+
+def md5(fname):
+    hash_md5 = hashlib.md5()
+    with open(fname, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if pd.isnull(obj):  # handles pandas NAType
+            return np.nan
+        return json.JSONEncoder.default(self, obj)
+
+
+def nanint(x):
+    if np.isnan(x):
+        return x
+    return int(x)

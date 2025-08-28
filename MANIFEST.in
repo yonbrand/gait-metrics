@@ -1,0 +1,3 @@
+include gait_metrics/resources/models/*.joblib
+include LICENSE
+include README.md
