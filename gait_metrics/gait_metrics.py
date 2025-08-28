@@ -8,8 +8,7 @@ import torch
 from scipy.stats import kurtosis, skew
 import json  # Added for JSON output
 
-
-import utils
+from . import utils, model_utils
 from model_utils import setup_model
 
 N_BINS = 10
