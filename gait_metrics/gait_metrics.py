@@ -9,7 +9,8 @@ from scipy.stats import kurtosis, skew
 import json  # Added for JSON output
 
 
-from . import utils
+import utils
+from model_utils import setup_model
 
 N_BINS = 10
 
@@ -202,6 +203,9 @@ def calculate_statistics(result, window_sec, window_len, analyze_bouts):
 
     return stats
 
+def set_model_to_eval(*models):
+    for model in models:
+        model.eval()
 
 def main():
     parser = argparse.ArgumentParser(description='Gait Metrics Computation Tool')
@@ -220,13 +224,70 @@ def main():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     models_dir = files('gait_metrics.resources.models')
-    gait_detection_model = joblib.load(models_dir / 'gait_detection_model.joblib')
-    step_count_model = joblib.load(models_dir / 'step_count_model.joblib')
-    gait_speed_model = joblib.load(models_dir / 'gait_speed_model.joblib')
-    cadence_model = joblib.load(models_dir / 'cadence_model.joblib')
-    stride_length_model = joblib.load(models_dir / 'stride_length_model.joblib')
-    regularity_model = joblib.load(models_dir / 'regularity_model.joblib')
-    
+    # gait_detection_model = joblib.load(models_dir / 'gait_detection_model.joblib')
+    # step_count_model = joblib.load(models_dir / 'step_count_model.joblib')
+    # gait_speed_model = joblib.load(models_dir / 'gait_speed_model.joblib')
+    # cadence_model = joblib.load(models_dir / 'cadence_model.joblib')
+    # stride_length_model = joblib.load(models_dir / 'stride_length_model.joblib')
+    # regularity_model = joblib.load(models_dir / 'regularity_model.joblib')
+
+    gait_detection_model = setup_model(
+        net='ElderNet',
+        is_classification=True,
+        trained_model_path=models_dir / 'gait_detection_model.pth',
+        output_size=2,
+        device=device)
+
+    step_count_model = setup_model(
+        net='ElderNet',
+        is_regression=True,
+        trained_model_path=models_dir / 'step_count_model.pth',
+        max_mu=25.0,
+        num_layers_regressor=0,
+        batch_norm=True,
+        device=device
+    )
+
+    gait_speed_model = setup_model(
+        net='ElderNet',
+        is_regression=True,
+        trained_model_path=models_dir / 'gait_speed_model.pth',
+        max_mu=2.0,
+        num_layers_regressor=1,
+        batch_norm=False,
+        device=device
+    )
+
+    cadence_model = setup_model(
+        net='ElderNet',
+        is_regression=True,
+        trained_model_path=models_dir / 'gait_speed_model.pth',
+        max_mu=160.0,
+        num_layers_regressor=1,
+        batch_norm=False,
+        device=device
+    )
+
+    stride_length_model = setup_model(
+        net='ElderNet',
+        is_regression=True,
+        trained_model_path=models_dir / 'stride_length_model.pth',
+        max_mu=2.0,
+        num_layers_regressor=1,
+        batch_norm=False,
+        device=device
+    )
+
+    regularity_model = setup_model(
+        net='ElderNet',
+        is_regression=True,
+        trained_model_path=models_dir / 'regularity_model.pth',
+        max_mu=2.0,
+        num_layers_regressor=1,
+        batch_norm=False,
+        device=device
+)
+
     models = ([
         gait_detection_model,
         step_count_model,
@@ -236,6 +297,7 @@ def main():
         regularity_model
     ])
 
+    set_model_to_eval(*models)
 
     filepath = args.file_path
 

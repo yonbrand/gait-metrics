@@ -31,7 +31,7 @@ def setup_model(
         num_layers_regressor=None,
         batch_norm=False,
         eldernet_linear_output=128,
-        pretrained=False,
+        pretrained=True,
         trained_model_path=None,
         name_start_idx=0,
         device='cpu'):
