@@ -51,7 +51,7 @@ def download_and_extract_model(model_name: str, zip_url: str) -> str:
     Download a .zip file containing a model and extract the .pt file.
 
     Args:
-        model_name (str): Name of the model file (e.g., 'gait_detection_model.pt').
+        model_name (str): Name of the model file inside the zip (e.g., 'gait_detection_model.pt').
         zip_url (str): URL to download the .zip file from.
 
     Returns:
@@ -60,29 +60,28 @@ def download_and_extract_model(model_name: str, zip_url: str) -> str:
     Raises:
         requests.RequestException: If the download fails.
         zipfile.BadZipFile: If the .zip file is corrupt.
+        ValueError: If the expected .pt file is not found in the zip.
     """
     zip_path = os.path.join(MODELS_DIR, f"{model_name}.zip")
     pt_path = os.path.join(MODELS_DIR, model_name)
 
     if not os.path.exists(pt_path):
-        try:
-            print(f"Downloading {model_name}.zip...")
-            response = requests.get(zip_url, stream=True)
-            response.raise_for_status()
-            with open(zip_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+        print(f"Downloading {model_name}.zip...")
+        response = requests.get(zip_url, stream=True)
+        response.raise_for_status()
+        with open(zip_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
 
-            print(f"Extracting {model_name}...")
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                zip_ref.extract(model_name, MODELS_DIR)
-            os.remove(zip_path)  # Clean up .zip file after extraction
-        except requests.RequestException as e:
-            raise RuntimeError(f"Failed to download {zip_url}: {e}")
-        except zipfile.BadZipFile as e:
-            raise RuntimeError(f"Failed to extract {zip_path}: {e}")
-        else:
-            print(f"{model_name} is ready at {pt_path}")
+        print(f"Extracting {model_name}...")
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            # List contents to debug
+            print(f"Zip contents: {zip_ref.namelist()}")
+            if model_name not in zip_ref.namelist():
+                raise ValueError(f"Expected {model_name} not found in {zip_path}")
+            zip_ref.extract(model_name, MODELS_DIR)
+        os.remove(zip_path)  # Clean up .zip file after extraction
+
     return pt_path
 
 
