@@ -143,6 +143,7 @@ step_count_model = setup_model(
     net="ElderNet",
     output_size=1,
     is_regression=True,
+    num_layers_regressor=1,
     max_mu=25.0,
     trained_model_path=download_and_extract_model(
         "step_count_model.pt", MODEL_URLS["step_count_model.pt"]
