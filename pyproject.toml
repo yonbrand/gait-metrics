@@ -16,10 +16,8 @@ dependencies = [
     "torch>=2.0",
     "actipy",
     "importlib-resources>=5.0",
+    "requests"
 ]
-
 [project.scripts]
 gait-metrics = "gait_metrics.gait_metrics:main"
 
-[tool.setuptools.package-data]
-"gait_metrics.resources.models" = ["*.pt"]
