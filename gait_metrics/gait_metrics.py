@@ -145,6 +145,7 @@ step_count_model = setup_model(
     is_regression=True,
     num_layers_regressor=1,
     max_mu=25.0,
+    batch_norm=True,
     trained_model_path=download_and_extract_model(
         "step_count_model.pt", MODEL_URLS["step_count_model.pt"]
     ),
@@ -154,6 +155,7 @@ gait_speed_model = setup_model(
     net="ElderNet",
     output_size=1,
     is_regression=True,
+    num_layers_regressor=0,
     max_mu=2.0,
     trained_model_path=download_and_extract_model(
         "gait_speed_model.pt", MODEL_URLS["gait_speed_model.pt"]
@@ -164,7 +166,9 @@ cadence_model = setup_model(
     net="ElderNet",
     output_size=1,
     is_regression=True,
-    max_mu=200.0,
+    num_layers_regressor=1,
+    max_mu=160.0,
+    batch_norm=True,
     trained_model_path=download_and_extract_model(
         "cadence_model.pt", MODEL_URLS["cadence_model.pt"]
     ),
@@ -174,7 +178,9 @@ stride_length_model = setup_model(
     net="ElderNet",
     output_size=1,
     is_regression=True,
+    num_layers_regressor=1,
     max_mu=2.0,
+    batch_norm=True,
     trained_model_path=download_and_extract_model(
         "stride_length_model.pt", MODEL_URLS["stride_length_model.pt"]
     ),
@@ -184,6 +190,7 @@ regularity_model = setup_model(
     net="ElderNet",
     output_size=1,
     is_regression=True,
+    num_layers_regressor=1,
     max_mu=1.0,
     trained_model_path=download_and_extract_model(
         "regularity_model.pt", MODEL_URLS["regularity_model.pt"]
