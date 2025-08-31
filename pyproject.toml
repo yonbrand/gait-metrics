@@ -1,36 +1,25 @@
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]  # Build tools
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "gait-metrics"  # Your package name (what users pip install)
-version = "0.1.0"  # Match __init__.py
-authors = [
-  { name = "Yonatan Brand", email = "brand1@mail.tau.ac.il" },
-]
+name = "gait-metrics"
+version = "0.1.0"
+authors = [{ name = "Yonatan Brand", email = "brand1@mail.tau.ac.il" }]
 description = "A package for analyzing acceleration data to compute gait metrics"
 readme = "README.md"
-requires-python = ">=3.8"  # Based on your Python 3.12 env; adjust as needed
+requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",  # Adjust to your license
     "Operating System :: OS Independent",
 ]
-dependencies = [  # Same as requirements.txt
+dependencies = [
     "numpy>=1.20",
     "pandas>=1.3",
     "scipy>=1.7",
     "torch>=2.0",
-    "joblib>=1.0",
     "actipy",
     "importlib-resources>=5.0",
 ]
 
-[project.optional-dependencies]
-dev = ["pytest", "black", "flake8"]  # For testing/formatting
-
-[project.scripts]  # Makes your CLI runnable as a command
-gait-metrics = "gait_metrics.gait_metrics:main"  # Runs main() when user types 'gait-metrics' in terminal
+[project.scripts]
+gait-metrics = "gait_metrics.gait_metrics:main"
 
 [tool.setuptools.package-data]
-"gait_metrics.resources.models" = ["*.joblib"]  # Include your model files
+"gait_metrics.resources.models" = ["*.pt"]

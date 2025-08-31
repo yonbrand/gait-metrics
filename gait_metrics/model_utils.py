@@ -5,7 +5,7 @@ import copy
 import torch
 from pathlib import Path
 from torch import nn
-from models import Resnet, ElderNet
+from .models import Resnet, ElderNet
 
 verbose = True
 torch_cache_path = Path(__file__).parent / 'torch_hub_cache'

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 
 import argparse
-import joblib
 from importlib_resources import files
 import numpy as np
 import torch
 from scipy.stats import kurtosis, skew
 import json  # Added for JSON output
 
-from . import utils, model_utils
-from model_utils import setup_model
+from . import utils
+from .model_utils import setup_model
 
 N_BINS = 10
 
@@ -23,6 +22,17 @@ GLOBAL_RANGES = {'bout_duration_all_values': {'min': 10, 'max': 3200}, 'gait_spe
                  'bout_regularity_eldernet_all_values': {'min': 0, 'max': 1},
                  'regularity_sp_all_values': {'min': 0, 'max': 1},
                  'bout_regularity_sp_all_values': {'min': 0, 'max': 1}}
+
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
 
 
 def histogram_features(column_data, global_ranges, bins=5, feature_name=None):
@@ -231,61 +241,65 @@ def main():
     # regularity_model = joblib.load(models_dir / 'regularity_model.joblib')
 
     gait_detection_model = setup_model(
-        net='ElderNet',
+        net='ElderNet',  # Or 'Resnet' if applicable
+        output_size=2,  # For classification (e.g., walk detection)
         is_classification=True,
-        trained_model_path=models_dir / 'gait_detection_model.pth',
-        output_size=2,
-        device=device)
+        trained_model_path=str(models_dir / 'gait_detection_model.pt'),
+        device=device
+    )
 
     step_count_model = setup_model(
         net='ElderNet',
+        output_size=1,
         is_regression=True,
-        trained_model_path=models_dir / 'step_count_model.pth',
-        max_mu=25.0,
-        num_layers_regressor=0,
+        num_layers_regressor=1,
         batch_norm=True,
+        max_mu=25,
+        trained_model_path=str(models_dir / 'step_count_model.pt'),
         device=device
     )
 
     gait_speed_model = setup_model(
         net='ElderNet',
+        output_size=1,
         is_regression=True,
-        trained_model_path=models_dir / 'gait_speed_model.pth',
+        num_layers_regressor=0,
         max_mu=2.0,
-        num_layers_regressor=1,
-        batch_norm=False,
+        trained_model_path=str(models_dir / 'gait_speed_model.pt'),
         device=device
     )
 
     cadence_model = setup_model(
         net='ElderNet',
+        output_size=1,
         is_regression=True,
-        trained_model_path=models_dir / 'gait_speed_model.pth',
-        max_mu=160.0,
         num_layers_regressor=1,
-        batch_norm=False,
+        max_mu=160.0,
+        batch_norm=True,
+        trained_model_path=str(models_dir / 'cadence_model.pt'),
         device=device
     )
 
     stride_length_model = setup_model(
         net='ElderNet',
+        output_size=1,
         is_regression=True,
-        trained_model_path=models_dir / 'stride_length_model.pth',
-        max_mu=2.0,
         num_layers_regressor=1,
-        batch_norm=False,
+        max_mu=2.0,
+        batch_norm=True,
+        trained_model_path=str(models_dir / 'stride_length_model.pt'),
         device=device
     )
 
     regularity_model = setup_model(
         net='ElderNet',
+        output_size=1,
         is_regression=True,
-        trained_model_path=models_dir / 'regularity_model.pth',
-        max_mu=2.0,
         num_layers_regressor=1,
-        batch_norm=False,
+        max_mu=1.0,
+        trained_model_path=str(models_dir / 'regularity_model.pt'),
         device=device
-)
+    )
 
     models = ([
         gait_detection_model,
@@ -432,7 +446,7 @@ def main():
 
     if args.output:
         with open(args.output, 'w') as f:
-            json.dump(stats, f, indent=4)
+            json.dump(stats, f, indent=4, cls=NumpyEncoder)
 
     return stats
 
