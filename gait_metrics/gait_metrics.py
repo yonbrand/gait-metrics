@@ -42,7 +42,7 @@ GLOBAL_RANGES = {
 }
 
 # Model download configuration
-MODELS_DIR = os.path.expanduser("~/.gait_metrics/models/")
+MODELS_DIR = os.path.expanduser("~/gait_metrics/models/")
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 
@@ -62,25 +62,45 @@ def download_and_extract_model(model_name: str, zip_url: str) -> str:
         zipfile.BadZipFile: If the .zip file is corrupt.
         ValueError: If the expected .pt file is not found in the zip.
     """
-    zip_path = os.path.join(MODELS_DIR, f"{model_name}.zip")
+    os.makedirs(MODELS_DIR, exist_ok=True)  # Ensure folder exists early
+    zip_path = os.path.join(MODELS_DIR, f"{os.path.splitext(model_name)[0]}.zip")
     pt_path = os.path.join(MODELS_DIR, model_name)
 
     if not os.path.exists(pt_path):
-        print(f"Downloading {model_name}.zip...")
-        response = requests.get(zip_url, stream=True)
-        response.raise_for_status()
-        with open(zip_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+        print(f"Downloading {os.path.basename(zip_path)}...")
+        try:
+            response = requests.get(zip_url, stream=True)
+            response.raise_for_status()
+            with open(zip_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        except requests.RequestException as e:
+            print(f"Download failed for {zip_url}: {e}")
+            raise
 
         print(f"Extracting {model_name}...")
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            # List contents to debug
-            print(f"Zip contents: {zip_ref.namelist()}")
-            if model_name not in zip_ref.namelist():
-                raise ValueError(f"Expected {model_name} not found in {zip_path}")
-            zip_ref.extract(model_name, MODELS_DIR)
-        os.remove(zip_path)  # Clean up .zip file after extraction
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                # List and debug contents
+                zip_contents = zip_ref.namelist()
+                print(f"Zip contents: {zip_contents}")
+                base_name = os.path.splitext(model_name)[0]
+                pt_file = next((f for f in zip_contents if f.endswith(".pt") and base_name in f), None)
+                if not pt_file:
+                    raise ValueError(f"No .pt file found in {zip_path} matching {base_name}")
+                zip_ref.extract(pt_file, MODELS_DIR)
+                # Rename to expected name if different
+                extracted_path = os.path.join(MODELS_DIR, pt_file)
+                if extracted_path != pt_path:
+                    os.rename(extracted_path, pt_path)
+        except (zipfile.BadZipFile, ValueError) as e:
+            print(f"Extraction failed for {zip_path}: {e}")
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+            raise
+        finally:
+            if os.path.exists(zip_path):
+                os.remove(zip_path)  # Clean up .zip file
 
     return pt_path
 
@@ -88,22 +108,22 @@ def download_and_extract_model(model_name: str, zip_url: str) -> str:
 # Model URLs (update with your GitHub release URLs for .zip files)
 MODEL_URLS = {
     "gait_detection_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/gait_detection_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/gait_detection_model.zip"
     ),
     "step_count_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/step_count_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/step_count_model.zip"
     ),
     "gait_speed_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/gait_speed_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/gait_speed_model.zip"
     ),
     "cadence_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/cadence_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/cadence_model.zip"
     ),
     "stride_length_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/stride_length_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/stride_length_model.zip"
     ),
     "regularity_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/regularity_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/regularity_model.zip"
     ),
 }
 
@@ -123,7 +143,7 @@ step_count_model = setup_model(
     net="ElderNet",
     output_size=1,
     is_regression=True,
-    max_mu=None,
+    max_mu=25.0,
     trained_model_path=download_and_extract_model(
         "step_count_model.pt", MODEL_URLS["step_count_model.pt"]
     ),
