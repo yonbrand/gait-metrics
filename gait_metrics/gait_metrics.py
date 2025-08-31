@@ -83,22 +83,22 @@ def download_and_extract_model(model_name: str, zip_url: str) -> str:
 # Model URLs (update with your GitHub release URLs for .zip files)
 MODEL_URLS = {
     "gait_detection_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/gait_detection_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/gait_detection_model.zip"
     ),
     "step_count_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/step_count_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/step_count_model.zip"
     ),
     "gait_speed_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/gait_speed_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/gait_speed_model.zip"
     ),
     "cadence_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/cadence_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/cadence_model.zip"
     ),
     "stride_length_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/stride_length_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/stride_length_model.zip"
     ),
     "regularity_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/regularity_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/v0.1.0/regularity_model.zip"
     ),
 }
 
