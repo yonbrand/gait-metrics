@@ -523,6 +523,7 @@ def main():
         required=True,
         help="Path(s) to the accelerometer file(s)",
     )
+    parser.add_argument("--output_dir", type=str, required=False, help="Directory for output JSON files")
     parser.add_argument(
         "--txyz", type=str, default="time,x,y,z", help="Column names for time and acceleration axes"
     )
@@ -537,7 +538,6 @@ def main():
     )
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     parser.add_argument("--analyze_bouts", action="store_true", help="Analyze walking bouts")
-    parser.add_argument("--output_dir", type=str, required=False, help="Directory for output JSON files")
 
     args = parser.parse_args()
 
@@ -674,13 +674,11 @@ def main():
 
         stats = calculate_statistics(result, window_sec, window_len, args.analyze_bouts)
 
-        if args.output_dir:
-            output_path = os.path.join(args.output_dir, f"{basename}.json")
-            with open(output_path, "w") as f:
-                json.dump(stats, f, indent=4, cls=NumpyEncoder)
-        elif args.output:
-            with open(args.output, "w") as f:
-                json.dump(stats, f, indent=4, cls=NumpyEncoder)
+
+        output_path = os.path.join(args.output_dir, f"{basename}.json")
+        with open(output_path, "w") as f:
+            json.dump(stats, f, indent=4, cls=NumpyEncoder)
+
 
     return None  # No return value needed for CLI
 
