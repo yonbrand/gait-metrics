@@ -16,6 +16,7 @@ import argparse
 import json
 import numpy as np
 import torch
+from torch.amp import autocast
 from scipy.stats import kurtosis, skew
 from importlib_resources import files
 
@@ -271,23 +272,31 @@ def process_signal_regularity(walking_batch, fs: float) -> np.ndarray:
 
 def process_batch(batch, model: torch.nn.Module, device: torch.device) -> np.ndarray:
     """
-    Process a batch of data through a model.
+    Process a batch of data through a model with mixed precision.
 
     Args:
-        batch: Input data batch.
+        batch: Input data batch (numpy array or tensor-like).
         model (torch.nn.Module): PyTorch model instance.
         device (torch.device): Torch device (CPU or CUDA).
 
     Returns:
         np.ndarray: Model predictions.
     """
-    X = torch.tensor(batch, dtype=torch.float32).to(device)
+
+    # Convert batch to tensor and move to device
+    X = torch.as_tensor(batch, dtype=torch.float32).to(device, non_blocking=True)
+
+    # Transpose if needed (check can be optimized)
     if X.shape[1] != 3:
-        X = X.transpose(1, 2)
-    with torch.no_grad():
+        X = X.transpose(1, 2).contiguous()  # Ensure contiguous memory for efficiency
+
+    # Use autocast for mixed precision inference
+    with torch.no_grad(), autocast(device_type=device.type):
         predictions = model(X)
         if predictions.shape[1] == 2:
             predictions = torch.argmax(predictions, dim=1)
+
+    # Move to CPU and convert to numpy efficiently
     return predictions.cpu().numpy()
 
 
@@ -573,7 +582,7 @@ def main():
             [processed_acc[i : i + window_len] for i in range(0, len(processed_acc) - window_len + 1, window_step_len)]
         )
 
-        batch_size = 512
+        batch_size = 1024
         pred_walk = []
         for i in range(0, len(acc_win_all), batch_size):
             batch = acc_win_all[i : i + batch_size]
