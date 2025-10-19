@@ -128,88 +128,123 @@ MODEL_URLS = {
     ),
 }
 
-# Load models globally at startup
+
+# Set device globally
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-gait_detection_model = setup_model(
-    net="ElderNet",
-    output_size=2,
-    is_classification=True,
-    trained_model_path=download_and_extract_model(
-        "gait_detection_model.pt", MODEL_URLS["gait_detection_model.pt"]
-    ),
-    device=device,
-)
-step_count_model = setup_model(
-    net="ElderNet",
-    output_size=1,
-    is_regression=True,
-    num_layers_regressor=1,
-    max_mu=25.0,
-    batch_norm=True,
-    trained_model_path=download_and_extract_model(
-        "step_count_model.pt", MODEL_URLS["step_count_model.pt"]
-    ),
-    device=device,
-)
-gait_speed_model = setup_model(
-    net="ElderNet",
-    output_size=1,
-    is_regression=True,
-    num_layers_regressor=0,
-    max_mu=2.0,
-    trained_model_path=download_and_extract_model(
-        "gait_speed_model.pt", MODEL_URLS["gait_speed_model.pt"]
-    ),
-    device=device,
-)
-cadence_model = setup_model(
-    net="ElderNet",
-    output_size=1,
-    is_regression=True,
-    num_layers_regressor=1,
-    max_mu=160.0,
-    batch_norm=True,
-    trained_model_path=download_and_extract_model(
-        "cadence_model.pt", MODEL_URLS["cadence_model.pt"]
-    ),
-    device=device,
-)
-stride_length_model = setup_model(
-    net="ElderNet",
-    output_size=1,
-    is_regression=True,
-    num_layers_regressor=1,
-    max_mu=2.0,
-    batch_norm=True,
-    trained_model_path=download_and_extract_model(
-        "stride_length_model.pt", MODEL_URLS["stride_length_model.pt"]
-    ),
-    device=device,
-)
-regularity_model = setup_model(
-    net="ElderNet",
-    output_size=1,
-    is_regression=True,
-    num_layers_regressor=1,
-    max_mu=1.0,
-    trained_model_path=download_and_extract_model(
-        "regularity_model.pt", MODEL_URLS["regularity_model.pt"]
-    ),
-    device=device,
-)
+# Global model cache, initialized to None
+_models_cache = {
+    "gait_detection": None,
+    "step_count": None,
+    "gait_speed": None,
+    "cadence": None,
+    "stride_length": None,
+    "regularity": None,
+}
 
-# Set models to evaluation mode
-models = [
-    gait_detection_model,
-    step_count_model,
-    gait_speed_model,
-    cadence_model,
-    stride_length_model,
-    regularity_model,
-]
-for model in models:
+
+def get_model(model_name: str) -> torch.nn.Module:
+    """
+    Lazily loads and returns a model from the cache.
+    If not in the cache, it loads the model from disk (or downloads it)
+    and stores it in the cache before returning.
+    """
+
+    # 1. Check if model is already loaded
+    if _models_cache[model_name] is not None:
+        return _models_cache[model_name]
+
+    # 2. If not loaded, load it now
+    print(f"Loading {model_name} model...")
+    model = None
+
+    if model_name == "gait_detection":
+        model = setup_model(
+            net="ElderNet",
+            output_size=2,
+            is_classification=True,
+            trained_model_path=download_and_extract_model(
+                "gait_detection_model.pt", MODEL_URLS["gait_detection_model.pt"]
+            ),
+            device=device,
+        )
+
+    elif model_name == "step_count":
+        model = setup_model(
+            net="ElderNet",
+            output_size=1,
+            is_regression=True,
+            num_layers_regressor=1,
+            max_mu=25.0,
+            batch_norm=True,
+            trained_model_path=download_and_extract_model(
+                "step_count_model.pt", MODEL_URLS["step_count_model.pt"]
+            ),
+            device=device,
+        )
+
+    elif model_name == "gait_speed":
+        model = setup_model(
+            net="ElderNet",
+            output_size=1,
+            is_regression=True,
+            num_layers_regressor=0,
+            max_mu=2.0,
+            trained_model_path=download_and_extract_model(
+                "gait_speed_model.pt", MODEL_URLS["gait_speed_model.pt"]
+            ),
+            device=device,
+        )
+
+    elif model_name == "cadence":
+        model = setup_model(
+            net="ElderNet",
+            output_size=1,
+            is_regression=True,
+            num_layers_regressor=1,
+            max_mu=160.0,
+            batch_norm=True,
+            trained_model_path=download_and_extract_model(
+                "cadence_model.pt", MODEL_URLS["cadence_model.pt"]
+            ),
+            device=device,
+        )
+
+    elif model_name == "stride_length":
+        model = setup_model(
+            net="ElderNet",
+            output_size=1,
+            is_regression=True,
+            num_layers_regressor=1,
+            max_mu=2.0,
+            batch_norm=True,
+            trained_model_path=download_and_extract_model(
+                "stride_length_model.pt", MODEL_URLS["stride_length_model.pt"]
+            ),
+            device=device,
+        )
+
+    elif model_name == "regularity":
+        model = setup_model(
+            net="ElderNet",
+            output_size=1,
+            is_regression=True,
+            num_layers_regressor=1,
+            max_mu=1.0,
+            trained_model_path=download_and_extract_model(
+                "regularity_model.pt", MODEL_URLS["regularity_model.pt"]
+            ),
+            device=device,
+        )
+
+    else:
+        raise ValueError(f"Unknown model name requested: {model_name}")
+
+    # 3. Set to evaluation mode and store in cache
     model.eval()
+    _models_cache[model_name] = model
+
+    return model
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -339,7 +374,7 @@ def detect_bouts(pred_walk: np.ndarray) -> np.ndarray:
 
 
 def calculate_statistics(
-    result: dict, window_sec: int, window_len: int, analyze_bouts: bool
+        result: dict, window_sec: int, window_len: int, analyze_bouts: bool
 ) -> dict:
     """
     Calculate statistical metrics from gait data.
@@ -363,7 +398,7 @@ def calculate_statistics(
     else:
         indices = np.arange(0, len(result["pred_walk"]), samples_per_day)
         daily_walking_amounts = np.array(
-            [np.sum(result["pred_walk"][i : i + samples_per_day]) for i in indices]
+            [np.sum(result["pred_walk"][i: i + samples_per_day]) for i in indices]
         ) * seconds_per_sample / 60
 
     window_days = np.array(result["window_days"], dtype=np.int64).flatten()
@@ -579,13 +614,16 @@ def main():
         samples_per_day_resampled = int(24 * 60 * 60 * fs)
         num_days = processed_acc.shape[0] // samples_per_day_resampled
         acc_win_all = np.array(
-            [processed_acc[i : i + window_len] for i in range(0, len(processed_acc) - window_len + 1, window_step_len)]
+            [processed_acc[i: i + window_len] for i in range(0, len(processed_acc) - window_len + 1, window_step_len)]
         )
 
         batch_size = 1024
         pred_walk = []
+
+        gait_detection_model = get_model("gait_detection")
+
         for i in range(0, len(acc_win_all), batch_size):
-            batch = acc_win_all[i : i + batch_size]
+            batch = acc_win_all[i: i + batch_size]
             with torch.inference_mode():
                 batch_pred_walk = process_batch(batch, gait_detection_model, device)
             pred_walk.extend(batch_pred_walk)
@@ -618,13 +656,20 @@ def main():
         window_days = days_array[window_starts]
 
         if walking_batch.size > 0:
+            step_count_model = get_model("step_count")
+            gait_speed_model = get_model("gait_speed")
+            cadence_model = get_model("cadence")
+            stride_length_model = get_model("stride_length")
+            regularity_model = get_model("regularity")
+
             pred_steps = []
             pred_speed = []
             pred_cadence = []
             pred_gait_length = []
             pred_regularity_eldernet = []
+
             for i in range(0, len(walking_batch), batch_size):
-                batch = walking_batch[i : i + batch_size]
+                batch = walking_batch[i: i + batch_size]
                 with torch.inference_mode():
                     batch_pred_steps = process_batch(batch, step_count_model, device)
                     batch_pred_speed = process_batch(batch, gait_speed_model, device)
@@ -674,11 +719,9 @@ def main():
 
         stats = calculate_statistics(result, window_sec, window_len, args.analyze_bouts)
 
-
         output_path = os.path.join(args.output_dir, f"{basename}.json")
         with open(output_path, "w") as f:
             json.dump(stats, f, indent=4, cls=NumpyEncoder)
-
 
     return None  # No return value needed for CLI
 
