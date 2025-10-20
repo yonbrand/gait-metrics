@@ -10,15 +10,12 @@ on GitHub Releases.
 """
 
 import os
-import requests
-import zipfile
 import argparse
 import json
 import numpy as np
 import torch
 from torch.amp import autocast
 from scipy.stats import kurtosis, skew
-from importlib_resources import files
 
 from . import utils
 from .model_utils import setup_model
@@ -42,92 +39,26 @@ GLOBAL_RANGES = {
     "bout_regularity_sp_all_values": {"min": 0, "max": 1},
 }
 
-# Model download configuration
-MODELS_DIR = os.path.expanduser("~/gait_metrics/models/")
-os.makedirs(MODELS_DIR, exist_ok=True)
-
-
-def download_and_extract_model(model_name: str, zip_url: str) -> str:
-    """
-    Download a .zip file containing a model and extract the .pt file.
-
-    Args:
-        model_name (str): Name of the model file inside the zip (e.g., 'gait_detection_model.pt').
-        zip_url (str): URL to download the .zip file from.
-
-    Returns:
-        str: Local path to the extracted .pt file.
-
-    Raises:
-        requests.RequestException: If the download fails.
-        zipfile.BadZipFile: If the .zip file is corrupt.
-        ValueError: If the expected .pt file is not found in the zip.
-    """
-    os.makedirs(MODELS_DIR, exist_ok=True)  # Ensure folder exists early
-    zip_path = os.path.join(MODELS_DIR, f"{os.path.splitext(model_name)[0]}.zip")
-    pt_path = os.path.join(MODELS_DIR, model_name)
-
-    if not os.path.exists(pt_path):
-        print(f"Downloading {os.path.basename(zip_path)}...")
-        try:
-            response = requests.get(zip_url, stream=True)
-            response.raise_for_status()
-            with open(zip_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        except requests.RequestException as e:
-            print(f"Download failed for {zip_url}: {e}")
-            raise
-
-        print(f"Extracting {model_name}...")
-        try:
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                # List and debug contents
-                zip_contents = zip_ref.namelist()
-                print(f"Zip contents: {zip_contents}")
-                base_name = os.path.splitext(model_name)[0]
-                pt_file = next((f for f in zip_contents if f.endswith(".pt") and base_name in f), None)
-                if not pt_file:
-                    raise ValueError(f"No .pt file found in {zip_path} matching {base_name}")
-                zip_ref.extract(pt_file, MODELS_DIR)
-                # Rename to expected name if different
-                extracted_path = os.path.join(MODELS_DIR, pt_file)
-                if extracted_path != pt_path:
-                    os.rename(extracted_path, pt_path)
-        except (zipfile.BadZipFile, ValueError) as e:
-            print(f"Extraction failed for {zip_path}: {e}")
-            if os.path.exists(zip_path):
-                os.remove(zip_path)
-            raise
-        finally:
-            if os.path.exists(zip_path):
-                os.remove(zip_path)  # Clean up .zip file
-
-    return pt_path
-
-
-# Model URLs (update with your GitHub release URLs for .zip files)
 MODEL_URLS = {
     "gait_detection_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/gait_detection_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/gait_detection_model.pt"
     ),
     "step_count_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/step_count_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/step_count_model.pt"
     ),
     "gait_speed_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/gait_speed_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/gait_speed_model.pt"
     ),
     "cadence_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/cadence_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/cadence_model.pt"
     ),
     "stride_length_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/stride_length_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/stride_length_model.pt"
     ),
     "regularity_model.pt": (
-        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/regularity_model.zip"
+        "https://github.com/yonbrand/gait-metrics/releases/download/v0.1.0/regularity_model.pt"
     ),
 }
-
 
 # Set device globally
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -146,7 +77,7 @@ _models_cache = {
 def get_model(model_name: str) -> torch.nn.Module:
     """
     Lazily loads and returns a model from the cache.
-    If not in the cache, it loads the model from disk (or downloads it)
+    If not in the cache, it loads the model (downloading from URL if needed)
     and stores it in the cache before returning.
     """
 
@@ -158,14 +89,13 @@ def get_model(model_name: str) -> torch.nn.Module:
     print(f"Loading {model_name} model...")
     model = None
 
+
     if model_name == "gait_detection":
         model = setup_model(
             net="ElderNet",
             output_size=2,
             is_classification=True,
-            trained_model_path=download_and_extract_model(
-                "gait_detection_model.pt", MODEL_URLS["gait_detection_model.pt"]
-            ),
+            model_url=MODEL_URLS["gait_detection_model.pt"],
             device=device,
         )
 
@@ -177,9 +107,7 @@ def get_model(model_name: str) -> torch.nn.Module:
             num_layers_regressor=1,
             max_mu=25.0,
             batch_norm=True,
-            trained_model_path=download_and_extract_model(
-                "step_count_model.pt", MODEL_URLS["step_count_model.pt"]
-            ),
+            model_url=MODEL_URLS["step_count_model.pt"],
             device=device,
         )
 
@@ -190,9 +118,7 @@ def get_model(model_name: str) -> torch.nn.Module:
             is_regression=True,
             num_layers_regressor=0,
             max_mu=2.0,
-            trained_model_path=download_and_extract_model(
-                "gait_speed_model.pt", MODEL_URLS["gait_speed_model.pt"]
-            ),
+            model_url=MODEL_URLS["gait_speed_model.pt"],
             device=device,
         )
 
@@ -204,9 +130,7 @@ def get_model(model_name: str) -> torch.nn.Module:
             num_layers_regressor=1,
             max_mu=160.0,
             batch_norm=True,
-            trained_model_path=download_and_extract_model(
-                "cadence_model.pt", MODEL_URLS["cadence_model.pt"]
-            ),
+            model_url=MODEL_URLS["cadence_model.pt"],
             device=device,
         )
 
@@ -218,9 +142,7 @@ def get_model(model_name: str) -> torch.nn.Module:
             num_layers_regressor=1,
             max_mu=2.0,
             batch_norm=True,
-            trained_model_path=download_and_extract_model(
-                "stride_length_model.pt", MODEL_URLS["stride_length_model.pt"]
-            ),
+            model_url=MODEL_URLS["stride_length_model.pt"],
             device=device,
         )
 
@@ -231,9 +153,7 @@ def get_model(model_name: str) -> torch.nn.Module:
             is_regression=True,
             num_layers_regressor=1,
             max_mu=1.0,
-            trained_model_path=download_and_extract_model(
-                "regularity_model.pt", MODEL_URLS["regularity_model.pt"]
-            ),
+            model_url=MODEL_URLS["regularity_model.pt"],
             device=device,
         )
 
@@ -241,10 +161,17 @@ def get_model(model_name: str) -> torch.nn.Module:
         raise ValueError(f"Unknown model name requested: {model_name}")
 
     # 3. Set to evaluation mode and store in cache
-    model.eval()
-    _models_cache[model_name] = model
+    if model is not None:
+        model.eval()
+        _models_cache[model_name] = model
 
     return model
+
+
+# ... (The rest of gait_metrics.py remains exactly the same) ...
+# (NumpyEncoder, histogram_features, process_signal_regularity,
+#  process_batch, calc_second_prediction, detect_bouts,
+#  calculate_statistics, set_model_to_eval, main)
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -620,6 +547,7 @@ def main():
         batch_size = 1024
         pred_walk = []
 
+        # Lazily load the gait detection model just before it's used.
         gait_detection_model = get_model("gait_detection")
 
         for i in range(0, len(acc_win_all), batch_size):
@@ -656,6 +584,7 @@ def main():
         window_days = days_array[window_starts]
 
         if walking_batch.size > 0:
+            # Lazily load the other models only if walking is detected.
             step_count_model = get_model("step_count")
             gait_speed_model = get_model("gait_speed")
             cadence_model = get_model("cadence")
