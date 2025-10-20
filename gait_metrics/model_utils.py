@@ -1,11 +1,18 @@
 #######################################################################################################################
 # Model configuration
 #######################################################################################################################
+import os
+from pathlib import Path
 import copy
 import torch
-from pathlib import Path
+import torch.hub
 from torch import nn
 from .models import Resnet, ElderNet
+
+
+MODELS_DIR = os.path.expanduser("~/gait_metrics/models/")
+os.makedirs(MODELS_DIR, exist_ok=True)
+
 
 verbose = True
 torch_cache_path = Path(__file__).parent / 'torch_hub_cache'
@@ -31,7 +38,7 @@ def setup_model(
         num_layers_regressor=None,
         batch_norm=False,
         eldernet_linear_output=128,
-        pretrained=True,
+        model_url=None,
         trained_model_path=None,
         name_start_idx=0,
         device='cpu'):
@@ -61,14 +68,36 @@ def setup_model(
                          batch_norm=batch_norm
                          )
 
-    if pretrained or trained_model_path is not None:
-        load_weights(trained_model_path, model, device, name_start_idx)
+
+    state_dict = None
+    if model_url is not None:
+        print(f"Loading pretrained weights from URL: {model_url}")
+        try:
+            state_dict = torch.hub.load_state_dict_from_url(
+                model_url,
+                model_dir=MODELS_DIR,
+                map_location=device,
+                progress=True
+            )
+        except Exception as e:
+            print(f"Error loading model from URL: {e}. Check URL and internet connection.")
+
+    elif trained_model_path is not None:
+        print(f"Loading pretrained weights from local path: {trained_model_path}")
+        try:
+            state_dict = torch.load(trained_model_path, map_location=device)
+        except FileNotFoundError:
+            print(f"Error: Local model file not found at {trained_model_path}")
+
+    if state_dict is not None:
+        # Pass the loaded state_dict to the modified load_weights function
+        load_weights(state_dict, model, device, name_start_idx)
+
 
     return copy.deepcopy(model).to(device, dtype=torch.float)
 
+def load_weights(pretrained_dict, model, name_start_idx=0):
 
-def load_weights(weight_path, model, my_device="cpu", name_start_idx=0):
-    pretrained_dict = torch.load(weight_path, map_location=my_device)
     pretrained_dict_v2 = copy.deepcopy(
         pretrained_dict
     )  # v2 has the right para names
@@ -100,6 +129,8 @@ def load_weights(weight_path, model, my_device="cpu", name_start_idx=0):
     # 3. load the new state dict
     model.load_state_dict(model_dict)
     print("%d Weights loaded" % len(pretrained_dict))
+
+
 
 
 def get_sslnet(harnet, tag='v1.0.0', pretrained=False, class_num=1, is_classification=False, is_regression=False):
