@@ -258,11 +258,168 @@ def process_batch(batch, model: torch.nn.Module, device: torch.device) -> np.nda
     return predictions.cpu().numpy()
 
 
-def calculate_statistics(result, window_sec, window_len, analyze_bouts):
-    # (The original calculate_statistics function remains unchanged)
-    # ...
-    # (truncated for brevity)
-    pass
+def calculate_statistics(
+        result: dict, window_sec: int, window_len: int, analyze_bouts: bool
+) -> dict:
+    """
+    Calculate statistical metrics from gait data.
+
+    Args:
+        result (dict): Dictionary containing prediction results.
+        window_sec (int): Window size in seconds.
+        window_len (int): Window length in samples.
+        analyze_bouts (bool): Whether to analyze bout-specific stats.
+
+    Returns:
+        dict: Statistical metrics for walking and bouts.
+    """
+    seconds_per_sample = window_sec / window_len
+    samples_per_day = int(24 * 60 * 60 / seconds_per_sample)
+    days = len(np.unique(result["window_days"]))
+
+    if len(result["pred_walk"]) % samples_per_day == 0:
+        reshaped = result["pred_walk"].reshape(-1, samples_per_day)
+        daily_walking_amounts = np.sum(reshaped, axis=1) * seconds_per_sample / 60
+    else:
+        indices = np.arange(0, len(result["pred_walk"]), samples_per_day)
+        daily_walking_amounts = np.array(
+            [np.sum(result["pred_walk"][i: i + samples_per_day]) for i in indices]
+        ) * seconds_per_sample / 60
+
+    window_days = np.array(result["window_days"], dtype=np.int64).flatten()
+    pred_window_steps = np.array(result["pred_window_steps"], dtype=np.float64).flatten()
+
+    if len(window_days) > 0 and len(window_days) == len(pred_window_steps):
+        if np.all(window_days >= 0):
+            daily_step_count = np.bincount(
+                window_days, weights=pred_window_steps, minlength=days
+            )
+        else:
+            print("Warning: Negative indices in window_days, setting daily_step_count to zeros")
+            daily_step_count = np.zeros(days, dtype=np.float64)
+    else:
+        print(
+            "Warning: Empty or mismatched window_days/pred_window_steps, "
+            "setting daily_step_count to zeros"
+        )
+        daily_step_count = np.zeros(days, dtype=np.float64)
+
+    def calc_stats(data, prefix: str = "", compute_advanced: bool = False, n_bins: int = 5) -> dict:
+        if not isinstance(data, np.ndarray):
+            data = np.array(data)
+        data = data.flatten()
+        if len(data) == 0:
+            stats_dict = {
+                f"{prefix}{stat}": np.nan
+                for stat in [
+                    "median",
+                    "mean",
+                    "std",
+                    "p5",
+                    "p10",
+                    "p90",
+                    "p95",
+                    "kurtosis",
+                    "skewness",
+                    "range",
+                ]
+            }
+            if compute_advanced:
+                stats_dict.update({f"{prefix}prob_bin{i}": np.nan for i in range(n_bins)})
+            return stats_dict
+
+        stats_dict = {
+            f"{prefix}median": np.median(data),
+            f"{prefix}mean": np.mean(data),
+            f"{prefix}std": np.std(data),
+            f"{prefix}p5": np.percentile(data, 5),
+            f"{prefix}p10": np.percentile(data, 10),
+            f"{prefix}p90": np.percentile(data, 90),
+            f"{prefix}p95": np.percentile(data, 95),
+            f"{prefix}kurtosis": kurtosis(data),
+            f"{prefix}skewness": skew(data),
+            f"{prefix}range": np.max(data) - np.min(data),
+        }
+
+        if compute_advanced:
+            hist_features = histogram_features(
+                data, GLOBAL_RANGES, bins=n_bins, feature_name=prefix + "all_values"
+            )
+            stats_dict.update(
+                {f"{prefix}prob_bin{i}": prob for i, prob in enumerate(hist_features["prob"])}
+            )
+
+        return stats_dict
+
+    walking_time = calc_stats(daily_walking_amounts, prefix="walking_time_")
+    step_count = calc_stats(daily_step_count, prefix="step_count_")
+
+    all_values = {
+        "gait_speed_all_values": result["pred_speed"],
+        "cadence_all_values": result["pred_cadence"],
+        "gait_length_all_values": result["pred_gait_length"],
+        "gait_length_indirect_all_values": result["pred_gait_length_indirect"],
+        "regularity_eldernet_all_values": result["pred_regularity_eldernet"],
+        "regularity_sp_all_values": result["pred_regularity_sp"],
+    }
+
+    all_values_stats = {}
+    for name, data in all_values.items():
+        all_values_stats.update(
+            calc_stats(data, prefix=name[:-10] + "_", compute_advanced=True, n_bins=N_BINS)
+        )
+
+    bout_values = {}
+    if analyze_bouts:
+        bout_days = np.array(result["bout_days"], dtype=np.int64).flatten()
+        bout_durations = np.array(result["bouts_durations"], dtype=np.float64).flatten()
+        if len(bout_days) > 0 and len(bout_days) == len(bout_durations):
+            if np.all(bout_days >= 0):
+                daily_bout_durations = np.bincount(
+                    bout_days, weights=bout_durations, minlength=days
+                )
+            else:
+                print("Warning: Negative indices in bout_days, setting daily_bout_durations to zeros")
+                daily_bout_durations = np.zeros(days, dtype=np.float64)
+        else:
+            print(
+                "Warning: Empty or mismatched bout_days/bout_durations, "
+                "setting daily_bout_durations to zeros"
+            )
+            daily_bout_durations = np.zeros(days, dtype=np.float64)
+
+        bout_values = {
+            "bout_duration_all_values": bout_durations,
+            "bout_gait_speed_all_values": result["pred_speed"],
+            "bout_cadence_all_values": result["pred_cadence"],
+            "bout_gait_length_all_values": result["pred_gait_length"],
+            "bout_gait_length_indirect_all_values": result["pred_gait_length_indirect"],
+            "bout_regularity_eldernet_all_values": result["pred_regularity_eldernet"],
+            "bout_regularity_sp_all_values": result["pred_regularity_sp"],
+        }
+
+        bout_values_stats = {}
+        for name, data in bout_values.items():
+            bout_values_stats.update(
+                calc_stats(data, prefix=name[:-10] + "_", compute_advanced=True, n_bins=N_BINS)
+            )
+
+        bout_durations_stats = calc_stats(daily_bout_durations, prefix="bout_duration_")
+    else:
+        bout_values_stats = {}
+        bout_durations_stats = {}
+
+    stats = {
+        "subject_id": result["subject_id"],
+        "wear_days": result["wear_days"],
+        **walking_time,
+        **step_count,
+        **all_values_stats,
+        **bout_durations_stats,
+        **bout_values_stats,
+    }
+
+    return stats
 
 
 def set_model_to_eval(*models):
