@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 
 
 # Constants
-N_BINS = 10
+N_BINS = 5
 
 GLOBAL_RANGES = {
     "bout_duration_all_values": {"min": 10, "max": 3200},
