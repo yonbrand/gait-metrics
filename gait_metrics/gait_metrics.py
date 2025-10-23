@@ -1,4 +1,4 @@
-# Modified gait_metrics.py with chunked processing by day
+# Modified gait_metrics.py with chunked processing by day and model selection
 
 # !/usr/bin/env python3
 
@@ -8,7 +8,7 @@ Gait Metrics Computation Tool
 This script processes multiple accelerometer data files to compute gait metrics
 such as walking time, step count, gait speed, cadence, stride length, and
 regularity using pre-trained models, loaded once for efficiency from .zip files
-on GitHub Releases.
+on GitHub Releases. Supports selecting a specific gait quality model via command-line arguments.
 """
 
 import os
@@ -81,6 +81,8 @@ _models_cache = {
     "regularity": None,
 }
 
+# Valid model choices
+VALID_MODELS = list(_models_cache.keys()) + ["all"]
 
 def get_model(model_name: str) -> torch.nn.Module:
     """
@@ -88,12 +90,18 @@ def get_model(model_name: str) -> torch.nn.Module:
     If not in the cache, it loads the model (downloading from URL if needed)
     and stores it in the cache before returning.
     """
+    if model_name not in VALID_MODELS and model_name != "all":
+        raise ValueError(f"Unknown model name requested: {model_name}. Valid choices are: {VALID_MODELS}")
 
-    # 1. Check if model is already loaded
+    # Skip if model_name is 'all'
+    if model_name == "all":
+        return None
+
+    # Check if model is already loaded
     if _models_cache[model_name] is not None:
         return _models_cache[model_name]
 
-    # 2. If not loaded, load it now
+    # Load model
     print(f"Loading {model_name} model...")
     model = None
 
@@ -164,10 +172,7 @@ def get_model(model_name: str) -> torch.nn.Module:
             device=device,
         )
 
-    else:
-        raise ValueError(f"Unknown model name requested: {model_name}")
-
-    # 3. Set to evaluation mode and store in cache
+    # Set to evaluation mode and store in cache
     if model is not None:
         model.eval()
         _models_cache[model_name] = model
@@ -177,7 +182,6 @@ def get_model(model_name: str) -> torch.nn.Module:
 
 class NumpyEncoder(json.JSONEncoder):
     """Custom JSON encoder for NumPy types."""
-
     def default(self, obj):
         if isinstance(obj, np.integer):
             return int(obj)
@@ -192,15 +196,6 @@ def histogram_features(column_data, global_ranges, bins: int = 5, feature_name: 
     """
     Computes histogram-based features from all_values columns, with normalization
     and additional stats.
-
-    Args:
-        column_data: Input data array.
-        global_ranges (dict): Dictionary of min/max ranges for normalization.
-        bins (int, optional): Number of histogram bins. Defaults to 5.
-        feature_name (str, optional): Name of the feature for range lookup.
-
-    Returns:
-        dict: Dictionary containing histogram probabilities.
     """
     if len(column_data) == 0:
         return {"prob": [np.nan] * bins}
@@ -219,13 +214,6 @@ def histogram_features(column_data, global_ranges, bins: int = 5, feature_name: 
 def process_signal_regularity(walking_batch, fs: float) -> np.ndarray:
     """
     Process walking batch to compute regularity scores.
-
-    Args:
-        walking_batch: Array of walking segments.
-        fs (float): Sampling frequency.
-
-    Returns:
-        np.ndarray: Regularity scores reshaped.
     """
     regularity_scores = np.array(
         [utils.calc_regularity(np.linalg.norm(segment, axis=1), fs) for segment in walking_batch]
@@ -236,49 +224,23 @@ def process_signal_regularity(walking_batch, fs: float) -> np.ndarray:
 def process_batch(batch, model: torch.nn.Module, device: torch.device) -> np.ndarray:
     """
     Process a batch of data through a model with mixed precision.
-
-    Args:
-        batch: Input data batch (numpy array or tensor-like).
-        model (torch.nn.Module): PyTorch model instance.
-        device (torch.device): Torch device (CPU or CUDA).
-
-    Returns:
-        np.ndarray: Model predictions.
     """
-
-    # Convert batch to tensor and move to device
     X = torch.as_tensor(batch, dtype=torch.float32).to(device, non_blocking=True)
-
-    # Transpose if needed (check can be optimized)
     if X.shape[1] != 3:
-        X = X.transpose(1, 2).contiguous()  # Ensure contiguous memory for efficiency
-
-    # Use autocast for mixed precision inference
+        X = X.transpose(1, 2).contiguous()
     with torch.no_grad(), autocast(device_type=device.type):
         predictions = model(X)
         if predictions.shape[1] == 2:
             predictions = torch.argmax(predictions, dim=1)
-
-    # Move to CPU and convert to numpy efficiently
     return predictions.cpu().to(torch.float32).numpy()
 
 
 def calculate_statistics(
-        result: dict, window_sec: int, window_len: int, analyze_bouts: bool
+        result: dict, window_sec: int, window_len: int, analyze_bouts: bool, selected_model: str
 ) -> dict:
     """
-    Calculate statistical metrics from gait data.
-
-    Args:
-        result (dict): Dictionary containing prediction results.
-        window_sec (int): Window size in seconds.
-        window_len (int): Window length in samples.
-        analyze_bouts (bool): Whether to analyze bout-specific stats.
-
-    Returns:
-        dict: Statistical metrics for walking and bouts.
+    Calculate statistical metrics from gait data for the selected model.
     """
-
     windows_per_day = int(24 * 60 * 60 / window_sec)
     days = len(np.unique(result["window_days"]))
 
@@ -292,7 +254,7 @@ def calculate_statistics(
         ) * window_sec / 60
 
     window_days = np.array(result["window_days"], dtype=np.int64).flatten()
-    pred_window_steps = np.array(result["pred_window_steps"], dtype=np.float64).flatten()
+    pred_window_steps = np.array(result.get("pred_window_steps", []), dtype=np.float64).flatten()
 
     if len(window_days) > 0 and len(window_days) == len(pred_window_steps):
         if np.all(window_days >= 0):
@@ -303,10 +265,6 @@ def calculate_statistics(
             print("Warning: Negative indices in window_days, setting daily_step_count to zeros")
             daily_step_count = np.zeros(days, dtype=np.float64)
     else:
-        print(
-            "Warning: Empty or mismatched window_days/pred_window_steps, "
-            "setting daily_step_count to zeros"
-        )
         daily_step_count = np.zeros(days, dtype=np.float64)
 
     def calc_stats(data, prefix: str = "", compute_advanced: bool = False, n_bins: int = 5) -> dict:
@@ -320,10 +278,10 @@ def calculate_statistics(
                     "median",
                     "mean",
                     "std",
-                    "p5",
                     "p10",
+                    "p25",
+                    "p75",
                     "p90",
-                    "p95",
                     "kurtosis",
                     "skewness",
                     "range",
@@ -350,7 +308,6 @@ def calculate_statistics(
             hist_features = histogram_features(
                 data, GLOBAL_RANGES, bins=n_bins, feature_name=prefix + "all_values"
             )
-
             hist_freqs = hist_features["freqs"]
             hist_probs = hist_features["prob"]
             for i, (freq, prob) in enumerate(zip(hist_freqs, hist_probs)):
@@ -360,15 +317,29 @@ def calculate_statistics(
         return stats_dict
 
     walking_time = calc_stats(daily_walking_amounts, prefix="walking_time_")
-    step_count = calc_stats(daily_step_count, prefix="step_count_")
+    step_count = calc_stats(daily_step_count, prefix="step_count_") if selected_model in ["step_count", "all"] else {}
+
+    # Define model-to-key mapping
+    model_to_keys = {
+        "gait_speed": ["gait_speed_all_values"],
+        "cadence": ["cadence_all_values"],
+        "stride_length": ["gait_length_all_values", "gait_length_indirect_all_values"],
+        "regularity": ["regularity_eldernet_all_values", "regularity_sp_all_values"],
+        "step_count": [],
+        "gait_detection": [],
+        "all": [
+            "gait_speed_all_values",
+            "cadence_all_values",
+            "gait_length_all_values",
+            "gait_length_indirect_all_values",
+            "regularity_eldernet_all_values",
+            "regularity_sp_all_values",
+        ],
+    }
 
     all_values = {
-        "gait_speed_all_values": result["pred_speed"],
-        "cadence_all_values": result["pred_cadence"],
-        "gait_length_all_values": result["pred_gait_length"],
-        "gait_length_indirect_all_values": result["pred_gait_length_indirect"],
-        "regularity_eldernet_all_values": result["pred_regularity_eldernet"],
-        "regularity_sp_all_values": result["pred_regularity_sp"],
+        key: result.get(key.replace("_all_values", ""), np.array([]))
+        for key in model_to_keys.get(selected_model, [])
     }
 
     all_values_stats = {}
@@ -378,46 +349,24 @@ def calculate_statistics(
         )
 
     bout_values = {}
-    if analyze_bouts:
+    if analyze_bouts and selected_model not in ["gait_detection", "step_count"]:
         bout_days = np.array(result["bout_days"], dtype=np.int64).flatten()
         bout_durations = np.array(result["bouts_durations"], dtype=np.float64).flatten()
-
-        # Compute per-bout medians for each metric
         bouts_id = np.array(result["bouts_id"])
         unique_bouts = np.unique(bouts_id)
-        bout_gait_speed = []
-        bout_cadence = []
-        bout_gait_length = []
-        bout_gait_length_indirect = []
-        bout_regularity_eldernet = []
-        bout_regularity_sp = []
 
-        for bout in unique_bouts:
-            mask = bouts_id == bout
-            if np.any(mask):
-                bout_gait_speed.append(np.median(result["pred_speed"][mask]))
-                bout_cadence.append(np.median(result["pred_cadence"][mask]))
-                bout_gait_length.append(np.median(result["pred_gait_length"][mask]))
-                bout_gait_length_indirect.append(np.median(result["pred_gait_length_indirect"][mask]))
-                bout_regularity_eldernet.append(np.median(result["pred_regularity_eldernet"][mask]))
-                bout_regularity_sp.append(np.median(result["pred_regularity_sp"][mask]))
-
-        bout_values = {
-            "bout_duration_all_values": bout_durations,
-            "bout_gait_speed_all_values": np.array(bout_gait_speed),
-            "bout_cadence_all_values": np.array(bout_cadence),
-            "bout_gait_length_all_values": np.array(bout_gait_length),
-            "bout_gait_length_indirect_all_values": np.array(bout_gait_length_indirect),
-            "bout_regularity_eldernet_all_values": np.array(bout_regularity_eldernet),
-            "bout_regularity_sp_all_values": np.array(bout_regularity_sp),
-        }
+        bout_keys = [key.replace("_all_values", "") for key in model_to_keys.get(selected_model, [])]
+        bout_values = {"bout_duration_all_values": bout_durations}
+        for key in bout_keys:
+            bout_values[f"bout_{key}_all_values"] = np.array(
+                [np.median(result[key][bouts_id == bout]) for bout in unique_bouts if np.any(bouts_id == bout)]
+            )
 
         bout_values_stats = {}
         for name, data in bout_values.items():
             bout_values_stats.update(
                 calc_stats(data, prefix=name[:-10], compute_advanced=True, n_bins=N_BINS)
             )
-
     else:
         bout_values_stats = {}
 
@@ -436,38 +385,65 @@ def calculate_statistics(
 def set_model_to_eval(*models):
     """
     Set multiple models to evaluation mode.
-
-    Args:
-        *models: Variable number of model instances.
     """
     for model in models:
-        model.eval()
+        if model is not None:
+            model.eval()
 
 
 def main():
-    # Hardcoded arguments for debugging in PyCharm
-    file_path = r'N:\Gait-Neurodynamics by Names\Yonatan\gait-metrics\gait_metrics\rush-sample.cwa.gz'  # Replace with your file path
-    output_dir = None  # Or set to a directory like "output"
-    txyz = "time,x,y,z"
-    exclude_first_last = 'None'
-    verbose = True
-    analyze_bouts = True
-
-    # Wrap in a class to mimic args
-    class Args:
-        def __init__(self, **kwargs):
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-
-    args = Args(
-        file_path=file_path,
-        output_dir=output_dir,
-        txyz=txyz,
-        exclude_first_last=exclude_first_last,
-        exclude_wear_below=None,
-        verbose=verbose,
-        analyze_bouts=analyze_bouts
+    # Define argument parser for CLI
+    parser = argparse.ArgumentParser(description="Gait Metrics Computation Tool")
+    parser.add_argument(
+        "--file_path",
+        type=str,
+        required=True,
+        help="Path to the input accelerometer data file"
     )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=None,
+        help="Directory to save output JSON files"
+    )
+    parser.add_argument(
+        "--txyz",
+        type=str,
+        default="time,x,y,z",
+        help="Column names for time and accelerometer axes"
+    )
+    parser.add_argument(
+        "--exclude_first_last",
+        type=str,
+        default="None",
+        help="Exclude first and last days ('None', 'first', 'last', 'both')"
+    )
+    parser.add_argument(
+        "--exclude_wear_below",
+        type=float,
+        default=None,
+        help="Exclude days with wear time below this threshold (hours)"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output"
+    )
+    parser.add_argument(
+        "--analyze_bouts",
+        action="store_true",
+        default=False,
+        help="Analyze gait bouts"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="all",
+        choices=VALID_MODELS,
+        help="Gait quality model to use: gait_detection, step_count, gait_speed, cadence, stride_length, regularity, or all"
+    )
+
+    # args = parser.parse_args()
 
     # Process each file
     file_path = args.file_path
@@ -488,12 +464,12 @@ def main():
         info.update(info_read)
     except Exception as e:
         print(f"Error processing {file_path}: {e}")
+        return
 
-
-    if args.exclude_first_last is not None:
+    if args.exclude_first_last.lower() != "none":
         data = utils.drop_first_last_days(data, args.exclude_first_last)
 
-    if args.exclude_wear_below is not None:
+    if args.exclude_wear_below.lower() != "none"::
         data = utils.flag_wear_below_days(data, args.exclude_wear_below)
 
     info.update(utils.calculate_wear_stats(data))
@@ -510,10 +486,10 @@ def main():
 
     batch_size = 1024
 
-    # Load the gait detection model
+    # Load the gait detection model (always needed to identify walking segments)
     gait_detection_model = get_model("gait_detection")
 
-    # Initialize accumulators
+    # Initialize accumulators based on selected model
     pred_walk_all = []
     pred_steps_all = []
     pred_speed_all = []
@@ -575,61 +551,102 @@ def main():
             walking_bouts_id_day = bouts_id_windows[walk_mask]
             walking_bouts_id_all.extend(walking_bouts_id_day)
 
-        if walking_batch.size > 0:
-            # Lazily load the other models only if walking is detected in any day.
-            step_count_model = get_model("step_count")
-            gait_speed_model = get_model("gait_speed")
-            cadence_model = get_model("cadence")
-            stride_length_model = get_model("stride_length")
-            regularity_model = get_model("regularity")
+        if walking_batch.size > 0 and args.model != "gait_detection":
+            # Load the selected model
+            selected_model = get_model(args.model) if args.model != "all" else None
 
             pred_steps_day = []
             pred_speed_day = []
             pred_cadence_day = []
             pred_gait_length_day = []
             pred_regularity_eldernet_day = []
+            pred_regularity_sp_day = []
 
             for i in range(0, len(walking_batch), batch_size):
                 batch = walking_batch[i: i + batch_size]
                 with torch.inference_mode():
-                    batch_pred_steps = process_batch(batch, step_count_model, device)
-                    batch_pred_speed = process_batch(batch, gait_speed_model, device)
-                    batch_pred_cadence = process_batch(batch, cadence_model, device)
-                    batch_pred_gait_length = process_batch(batch, stride_length_model, device)
-                    batch_pred_regularity_eldernet = process_batch(batch, regularity_model, device)
-                pred_steps_day.extend(batch_pred_steps)
-                pred_speed_day.extend(batch_pred_speed)
-                pred_cadence_day.extend(batch_pred_cadence)
-                pred_gait_length_day.extend(batch_pred_gait_length)
-                pred_regularity_eldernet_day.extend(batch_pred_regularity_eldernet)
+                    if args.model == "all":
+                        # Load all models if not already loaded
+                        step_count_model = get_model("step_count")
+                        gait_speed_model = get_model("gait_speed")
+                        cadence_model = get_model("cadence")
+                        stride_length_model = get_model("stride_length")
+                        regularity_model = get_model("regularity")
+                        batch_pred_steps = process_batch(batch, step_count_model, device)
+                        batch_pred_speed = process_batch(batch, gait_speed_model, device)
+                        batch_pred_cadence = process_batch(batch, cadence_model, device)
+                        batch_pred_gait_length = process_batch(batch, stride_length_model, device)
+                        batch_pred_regularity_eldernet = process_batch(batch, regularity_model, device)
+                        pred_steps_day.extend(batch_pred_steps)
+                        pred_speed_day.extend(batch_pred_speed)
+                        pred_cadence_day.extend(batch_pred_cadence)
+                        pred_gait_length_day.extend(batch_pred_gait_length)
+                        pred_regularity_eldernet_day.extend(batch_pred_regularity_eldernet)
+                        pred_regularity_sp_day.extend(process_signal_regularity(batch, fs))
+                    else:
+                        if args.model == "step_count":
+                            batch_pred_steps = process_batch(batch, selected_model, device)
+                            pred_steps_day.extend(batch_pred_steps)
+                        elif args.model == "gait_speed":
+                            batch_pred_speed = process_batch(batch, selected_model, device)
+                            pred_speed_day.extend(batch_pred_speed)
+                        elif args.model == "cadence":
+                            batch_pred_cadence = process_batch(batch, selected_model, device)
+                            pred_cadence_day.extend(batch_pred_cadence)
+                        elif args.model == "stride_length":
+                            batch_pred_gait_length = process_batch(batch, selected_model, device)
+                            pred_gait_length_day.extend(batch_pred_gait_length)
+                        elif args.model == "regularity":
+                            batch_pred_regularity_eldernet = process_batch(batch, selected_model, device)
+                            pred_regularity_eldernet_day.extend(batch_pred_regularity_eldernet)
+                            pred_regularity_sp_day.extend(process_signal_regularity(batch, fs))
 
-            pred_steps_day = np.array(np.round(pred_steps_day))
-            pred_speed_day = np.array(pred_speed_day)
-            pred_cadence_day = np.array(pred_cadence_day)
-            pred_gait_length_day = np.array(pred_gait_length_day)
-            pred_gait_length_indirect_day = np.array(120 * pred_speed_day / pred_cadence_day) if len(
-                pred_cadence_day) > 0 else np.array([])
-            pred_regularity_eldernet_day = np.array(pred_regularity_eldernet_day)
-            pred_regularity_sp_day = process_signal_regularity(walking_batch, fs)
+            if args.model == "all" or args.model == "step_count":
+                pred_steps_day = np.array(np.round(pred_steps_day))
+            if args.model == "all" or args.model == "gait_speed":
+                pred_speed_day = np.array(pred_speed_day)
+            if args.model == "all" or args.model == "cadence":
+                pred_cadence_day = np.array(pred_cadence_day)
+            if args.model == "all" or args.model == "stride_length":
+                pred_gait_length_day = np.array(pred_gait_length_day)
+            if args.model == "all" or args.model == "stride_length" or args.model == "cadence" or args.model == "gait_speed":
+                pred_gait_length_indirect_day = np.array(120 * pred_speed_day / pred_cadence_day) if len(
+                    pred_cadence_day) > 0 and len(pred_speed_day) > 0 else np.array([])
+            if args.model == "all" or args.model == "regularity":
+                pred_regularity_eldernet_day = np.array(pred_regularity_eldernet_day)
+                pred_regularity_sp_day = np.array(pred_regularity_sp_day)
 
             pred_walk_all.extend(pred_walk_day)
-            pred_steps_all.extend(pred_steps_day)
-            pred_speed_all.extend(pred_speed_day)
-            pred_cadence_all.extend(pred_cadence_day)
-            pred_gait_length_all.extend(pred_gait_length_day)
-            pred_gait_length_indirect_all.extend(pred_gait_length_indirect_day)
-            pred_regularity_eldernet_all.extend(pred_regularity_eldernet_day)
-            pred_regularity_sp_all.extend(pred_regularity_sp_day)
+            if args.model == "all" or args.model == "step_count":
+                pred_steps_all.extend(pred_steps_day)
+            if args.model == "all" or args.model == "gait_speed":
+                pred_speed_all.extend(pred_speed_day)
+            if args.model == "all" or args.model == "cadence":
+                pred_cadence_all.extend(pred_cadence_day)
+            if args.model == "all" or args.model == "stride_length":
+                pred_gait_length_all.extend(pred_gait_length_day)
+            if args.model == "all" or args.model == "stride_length" or args.model == "cadence" or args.model == "gait_speed":
+                pred_gait_length_indirect_all.extend(pred_gait_length_indirect_day)
+            if args.model == "all" or args.model == "regularity":
+                pred_regularity_eldernet_all.extend(pred_regularity_eldernet_day)
+                pred_regularity_sp_all.extend(pred_regularity_sp_day)
 
         else:
-            pred_walk_all = np.array([])
-            pred_steps_all = np.array([])
-            pred_speed_all = np.array([])
-            pred_cadence_all = np.array([])
-            pred_gait_length_all = np.array([])
-            pred_gait_length_indirect_all = np.array([])
-            pred_regularity_eldernet_all = np.array([])
-            pred_regularity_sp_all = np.array([])
+            pred_walk_all.extend(pred_walk_day)
+            # Initialize empty arrays for non-selected models
+            if args.model == "all" or args.model == "step_count":
+                pred_steps_all.extend(np.array([]))
+            if args.model == "all" or args.model == "gait_speed":
+                pred_speed_all.extend(np.array([]))
+            if args.model == "all" or args.model == "cadence":
+                pred_cadence_all.extend(np.array([]))
+            if args.model == "all" or args.model == "stride_length":
+                pred_gait_length_all.extend(np.array([]))
+            if args.model == "all" or args.model == "stride_length" or args.model == "cadence" or args.model == "gait_speed":
+                pred_gait_length_indirect_all.extend(np.array([]))
+            if args.model == "all" or args.model == "regularity":
+                pred_regularity_eldernet_all.extend(np.array([]))
+                pred_regularity_sp_all.extend(np.array([]))
 
         window_days_day = np.full(len(walking_window_indices), day, dtype=np.int64)
         window_days_all.extend(window_days_day)
@@ -639,43 +656,37 @@ def main():
 
     # Convert accumulators to arrays
     pred_walk = np.array(pred_walk_all)
-    pred_steps = np.array(pred_steps_all)
-    pred_speed = np.array(pred_speed_all)
-    pred_cadence = np.array(pred_cadence_all)
-    pred_gait_length = np.array(pred_gait_length_all)
-    pred_gait_length_indirect = np.array(pred_gait_length_indirect_all)
-    pred_regularity_eldernet = np.array(pred_regularity_eldernet_all)
-    pred_regularity_sp = np.array(pred_regularity_sp_all)
-    window_days = np.array(window_days_all)
-    bouts_durations = np.array(bouts_durations_all)
-    bout_days = np.array(bout_days_all)
-    walking_bouts_id = np.array(walking_bouts_id_all)
-
     result = {
         "subject_id": basename,
         "wear_days": num_days,
-        "pred_window_steps": pred_steps,
-        "window_days": window_days,
         "pred_walk": pred_walk,
-        "pred_speed": pred_speed,
-        "pred_cadence": pred_cadence,
-        "pred_gait_length": pred_gait_length,
-        "pred_gait_length_indirect": pred_gait_length_indirect,
-        "pred_regularity_eldernet": pred_regularity_eldernet,
-        "pred_regularity_sp": pred_regularity_sp,
-        "bouts_id": walking_bouts_id,
-        "bouts_durations": bouts_durations,
-        "bout_days": bout_days,
+        "window_days": np.array(window_days_all),
+        "bouts_id": np.array(walking_bouts_id_all),
+        "bouts_durations": np.array(bouts_durations_all),
+        "bout_days": np.array(bout_days_all),
     }
+    if args.model == "all" or args.model == "step_count":
+        result["pred_window_steps"] = np.array(pred_steps_all)
+    if args.model == "all" or args.model == "gait_speed":
+        result["gait_speed"] = np.array(pred_speed_all)
+    if args.model == "all" or args.model == "cadence":
+        result["cadence"] = np.array(pred_cadence_all)
+    if args.model == "all" or args.model == "stride_length":
+        result["gait_length"] = np.array(pred_gait_length_all)
+    if args.model == "all" or args.model == "stride_length" or args.model == "cadence" or args.model == "gait_speed":
+        result["gait_length_indirect"] = np.array(pred_gait_length_indirect_all)
+    if args.model == "all" or args.model == "regularity":
+        result["regularity_eldernet"] = np.array(pred_regularity_eldernet_all)
+        result["regularity_sp"] = np.array(pred_regularity_sp_all)
 
-    stats = calculate_statistics(result, window_sec, window_len, args.analyze_bouts)
+    stats = calculate_statistics(result, window_sec, window_len, args.analyze_bouts, args.model)
 
     output_path = os.path.join(args.output_dir, f"{basename}.json") if args.output_dir else f"{basename}.json"
     with open(output_path, "w") as f:
         json.dump(stats, f, indent=4, cls=NumpyEncoder)
 
+    return None
 
-    return None  # No return value needed for CLI
 
 if __name__ == "__main__":
     main()
